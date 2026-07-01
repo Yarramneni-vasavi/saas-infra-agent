@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# Poetry
+dist/
+*.lock
+
+# Environment / secrets
+.env
+*.env
+config.local.yaml
+
+# Generated output (infra artifacts)
+output/
+
+# arch.md — generated at runtime, not source code
+arch.md
+
+# SQLite DB
+*.db
+*.sqlite
+
+# LangSmith / observability
+*.log
+
+# VS Code
+.vscode/

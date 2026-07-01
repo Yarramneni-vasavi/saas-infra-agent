@@ -1,0 +1,27 @@
+embeddings:
+  provider: openai             
+  model: text-embedding-3-small
+
+vector_store:
+  provider: qdrant
+  retrieval_mode: hybrid  # dense | sparse | hybrid
+
+qdrant:
+  collection_name: saas_agent # it is cloud, so no persist_dir
+
+llm:
+  provider: openai        # openai | anthropic
+  model: gpt-4o
+  small_model: gpt-4o-mini
+
+memory:
+  db_path: .memory/memory.db
+  summarize_at_tokens: 4000
+  keep_last_messages: 20
+
+agent:
+  artifact_dir: artifacts
+
+web_search:
+  provider: tavily
+  timeout_s: 10                          # used by DuckDuckGo fallback only
