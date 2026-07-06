@@ -49,6 +49,8 @@ def _search_tavily(query: str, max_results: int) -> list[dict]:
             "web_search.TAVILY_API_KEY is missing from config. "
             "Get a free key at https://app.tavily.com"
         )
+    
+    logger.info(f"Tavily search initiated for query {query}")
 
     client = TavilyClient(api_key=api_key)
     response = client.search(
