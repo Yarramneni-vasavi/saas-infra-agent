@@ -11,7 +11,7 @@ qdrant:
 
 llm:
   provider: openai        # openai | anthropic
-  model: gpt-5
+  model: gpt-4o
   small_model: gpt-5-mini
 
 memory:
@@ -26,6 +26,11 @@ agent:
   tool_call_run_limit: 40         # max tool calls per invocation (null disables)
   model_call_exit_behavior: end   # end | error
   tool_call_exit_behavior: continue  # continue | end | error
+  # Build agent overrides (long-running plan-and-execute deep agent)
+  build:
+    model_call_run_limit: 60
+    tool_call_run_limit: 200
+    recursion_limit: 500          # LangGraph superstep cap for one build run
 
 web_search:
   provider: tavily

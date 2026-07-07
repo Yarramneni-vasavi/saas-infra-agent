@@ -60,6 +60,25 @@ def _design_waiting_for_user(design_thread_id: str) -> bool:
     return bool(channel_values.get("awaiting_kind"))
 
 
+def _build_waiting_for_approval(thread_id: str) -> bool:
+    """True when the BUILD agent is paused on a request_plan_approval interrupt."""
+    checkpoint_tuple = get_checkpointer().get_tuple({"configurable": {"thread_id": thread_id}})
+    if not checkpoint_tuple or not checkpoint_tuple.pending_writes:
+        return False
+    return any(channel == "__interrupt__" for _, channel, _ in checkpoint_tuple.pending_writes)
+
+
+def _interrupt_prompt(result: dict) -> str | None:
+    """Extract the human-facing prompt when an agent run paused on an interrupt."""
+    interrupts = result.get("__interrupt__") or []
+    if not interrupts:
+        return None
+    payload = interrupts[0].value
+    if isinstance(payload, dict) and isinstance(payload.get("prompt"), str):
+        return payload["prompt"]
+    return str(payload)
+
+
 def _is_build_intent(text: str) -> bool:
     q = text.lower()
     return any(
@@ -147,6 +166,15 @@ def select_agent_kind(question: str, thread_id: str) -> AgentKind:
 def handle_query(question: str, thread_id: str) -> str:
     """Entry point for user queries - routes to design/build agent and runs it."""
     stripped, explicit = _strip_mode_prefix(question)
+
+    # A build paused for plan approval owns the next reply — resume it instead
+    # of routing, unless the user explicitly switches to another agent.
+    if explicit in (None, AgentKind.BUILD) and _build_waiting_for_approval(thread_id):
+        agent = get_agent(AgentKind.BUILD)
+        agent_config = {"configurable": {"thread_id": thread_id}}
+        result = agent.invoke(Command(resume=stripped), agent_config)
+        return _interrupt_prompt(result) or result["messages"][-1].content
+
     agent_kind = explicit or select_agent_kind(stripped, thread_id)
 
     logger.info(f"Handling query agent_kind={agent_kind.value} question={stripped!r}")
@@ -160,14 +188,12 @@ def handle_query(question: str, thread_id: str) -> str:
         else:
             result = agent.invoke({"user_message": stripped}, agent_config)
 
-        if "__interrupt__" in result and result["__interrupt__"]:
-            payload = result["__interrupt__"][0].value
-            if isinstance(payload, dict) and isinstance(payload.get("prompt"), str):
-                return payload["prompt"]
-            return str(payload)
+        prompt = _interrupt_prompt(result)
+        if prompt is not None:
+            return prompt
 
         return (result.get("assistant_output") or "").strip() or "OK"
 
     agent_config = {"configurable": {"thread_id": thread_id}}
     response = agent.invoke({"messages": [HumanMessage(content=stripped)]}, agent_config)
-    return response["messages"][-1].content
+    return _interrupt_prompt(response) or response["messages"][-1].content
