@@ -105,7 +105,7 @@ def _is_build_intent(text: str) -> bool:
             "go ahead and build",
             "go ahead, build",
             "build this",
-            "build it",
+            "build",
             "start building",
             "implement",
             "proceed",
