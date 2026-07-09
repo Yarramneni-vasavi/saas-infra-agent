@@ -62,10 +62,28 @@ def _design_waiting_for_user(design_thread_id: str) -> bool:
 
 def _build_waiting_for_approval(thread_id: str) -> bool:
     """True when the BUILD agent is paused on a request_plan_approval interrupt."""
+    return pending_approval_prompt(thread_id) is not None
+
+
+def pending_approval_prompt(thread_id: str) -> str | None:
+    """The human-facing prompt of the interrupt this thread is paused on, if any.
+
+    A pending interrupt survives CLI restarts (it lives in the checkpointer), so
+    the CLI uses this on startup to re-display what the next message will answer.
+    """
     checkpoint_tuple = get_checkpointer().get_tuple({"configurable": {"thread_id": thread_id}})
     if not checkpoint_tuple or not checkpoint_tuple.pending_writes:
-        return False
-    return any(channel == "__interrupt__" for _, channel, _ in checkpoint_tuple.pending_writes)
+        return None
+    for _, channel, value in checkpoint_tuple.pending_writes:
+        if channel != "__interrupt__":
+            continue
+        interrupts = value if isinstance(value, (list, tuple)) else [value]
+        for intr in interrupts:
+            payload = getattr(intr, "value", intr)
+            if isinstance(payload, dict) and isinstance(payload.get("prompt"), str):
+                return payload["prompt"]
+            return str(payload)
+    return None
 
 
 def _interrupt_prompt(result: dict) -> str | None:

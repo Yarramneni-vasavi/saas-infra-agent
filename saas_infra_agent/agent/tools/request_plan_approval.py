@@ -20,7 +20,7 @@ def request_plan_approval(plan: str) -> str:
     """
     Ask the human to approve the build plan before any artifacts are written.
 
-    Call this after write_todos, passing a concise human-readable summary of
+    Call this after write_tasks, passing a concise human-readable summary of
     the plan: deployment target, files to be generated, and any assumptions.
     Execution pauses until the human replies; their reply is returned verbatim.
     Proceed only on an explicit approval — otherwise revise the plan and call

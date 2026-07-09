@@ -1,8 +1,10 @@
 """BUILD agent: turns an approved architecture plan into runnable IaC artifacts.
 
 Built on deepagents' create_deep_agent for long-running plan-and-execute runs:
-- TodoListMiddleware (write_todos) so the agent plans the build and works
-  through it step by step, resumable via the shared SQLite checkpointer.
+- write_tasks/read_tasks persist the build plan as a DAG in the task store
+  (keyed by thread_id), so an interrupted build resumes from the stored plan
+  instead of re-planning. The prompt steers the agent to these instead of the
+  built-in write_todos, which create_deep_agent always includes.
 - SkillsMiddleware loads the skills library from saas_infra_agent/skills with
   progressive disclosure (names/descriptions in the system prompt, full
   SKILL.md read on demand).
@@ -30,6 +32,7 @@ from saas_infra_agent.observability.logger import get_logger
 from .middleware.limits import get_limit_middleware
 from .tools.request_plan_approval import request_plan_approval
 from .tools.search_codebase import search_codebase
+from .tools.task_plan import read_tasks, write_tasks
 
 logger = get_logger(__name__)
 
@@ -49,18 +52,34 @@ BUILD_SYSTEM_PROMPT = """You are the BUILD agent for a SaaS infrastructure assis
 You turn an already-approved architecture plan into runnable Infrastructure as
 Code. You do NOT decide the stack — that is the DESIGN agent's job.
 
-## Plan first, then get human approval (long-running task)
+## Task plan: a DAG, persisted for resuming (long-running task)
 
-This is a multi-step job. Before generating anything:
+Plan and track the build with write_tasks and read_tasks — NOT write_todos.
+The task plan is stored outside the conversation, so an interrupted build can
+be resumed exactly where it stopped.
 
-1. Call write_todos with the full build plan (read the architecture doc, load
-   the relevant skills, generate each artifact file, final summary).
-2. Call request_plan_approval with a concise summary of that plan: the
+1. At the START of every run, call read_tasks first.
+   - If a stored plan has incomplete tasks, do NOT re-plan and do NOT ask for
+     approval again: resume by executing the tasks it lists as ready.
+   - Only create a new plan when no stored plan exists, or the user explicitly
+     asks to start over or changes the requirements.
+2. Model the plan as a DAG. Each task has a unique kebab-case id, a one-line
+   description, and depends_on listing the task ids that must finish first:
+   - Reading the architecture doc and loading skills come first; every
+     artifact-file task depends on them; the final summary task depends on all
+     artifact tasks.
+   - Independent artifact files (e.g. main.tf vs Dockerfile) must NOT depend
+     on each other — only add a dependency when the output of one task is
+     genuinely needed by another.
+   - No cycles. write_tasks rejects invalid graphs — fix the graph and retry.
+3. Call request_plan_approval with a concise summary of that plan: the
    deployment target, the files you will generate, and any assumptions.
    Do NOT write any artifact files before the human approves.
-3. If the reply approves, execute the plan step by step, keeping the todo list
-   updated as you complete steps. If the reply asks for changes, revise the
-   todos and call request_plan_approval again with the updated plan.
+4. If the reply approves, execute the plan: only start tasks whose dependencies
+   are all completed, and call write_tasks with the FULL updated list whenever
+   a task changes status (in_progress when you start it, completed when you
+   finish it). If the reply asks for changes, revise the plan with write_tasks
+   and call request_plan_approval again.
 
 ## Workflow
 
@@ -131,7 +150,7 @@ def create_build_agent():
 
     agent = create_deep_agent(
         model=get_llm(),
-        tools=[search_codebase, request_plan_approval],
+        tools=[search_codebase, request_plan_approval, write_tasks, read_tasks],
         system_prompt=BUILD_SYSTEM_PROMPT,
         backend=backend,
         skills=SKILL_SOURCES,

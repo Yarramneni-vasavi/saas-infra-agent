@@ -12,10 +12,13 @@ Three agents, coordinated by a router ([agent/orchestrator.py](saas_infra_agent/
 | BUILD   | Turns the approved `architecture.md` into IaC (Terraform, Dockerfile, compose, k8s)   |
 | MONITOR | Metrics, token usage, cost analysis, optimization recommendations                     |
 
-The BUILD agent consults a local skills library ([saas_infra_agent/skills/](saas_infra_agent/skills/))
-before generating artifacts — output contracts under `skills/build/`
-(terraform-scaffold, dockerfile, docker-compose, kubernetes-manifests), plus
-per-service AWS skills, `terraform-module-library`, and `cost-optimization`.
+The BUILD agent is a long-running [deepagents](https://pypi.org/project/deepagents/)
+deep agent: it plans the build with a todo list, loads the skills library
+([saas_infra_agent/skills/](saas_infra_agent/skills/)) via progressive disclosure
+(per-service AWS skills, `terraform-module-library`, `cost-optimization`,
+workload patterns), and writes artifacts through sandboxed filesystem tools —
+writes are permission-limited to the `artifacts/` directory, and `.env`/`.git`
+are unreadable to the model.
 
 ## Setup
 
@@ -91,11 +94,10 @@ saas_infra_agent/
 ├── agent/
 │   ├── orchestrator.py      # Router: design | build | monitor
 │   ├── design_agent.py      # Interrupt-driven requirements workflow
-│   ├── build_agent.py       # Plan → IaC, skill-aware
+│   ├── build_agent.py       # Plan → IaC deep agent (todos, skills, sandboxed fs)
 │   ├── agents.py            # AgentKind + monitor agent + get_agent()
-│   └── tools/               # read/write/search tools + skills tools
+│   └── tools/               # read/write/search tools
 ├── skills/                  # Skills library (SKILL.md per skill)
-│   ├── build/               # BUILD output contracts (terraform, docker, k8s)
 │   ├── workloads/           # rag, microservices, monolith, ...
 │   └── aws-agent-skills/    # per-AWS-service guidance
 └── memory/                  # SQLite checkpointer + session handling
