@@ -8,8 +8,8 @@ Three agents, coordinated by a router ([agent/orchestrator.py](saas_infra_agent/
 
 | Agent   | Job                                                                                  |
 |---------|--------------------------------------------------------------------------------------|
-| DESIGN  | Clarifies requirements, recommends a stack + cost, writes `architecture.md`           |
-| BUILD   | Turns the approved `architecture.md` into IaC (Terraform, Dockerfile, compose, k8s)   |
+| DESIGN  | Clarifies requirements, recommends a stack + cost, writes `pdr.md`           |
+| BUILD   | Turns the approved `pdr.md` into IaC (Terraform, Dockerfile, compose, k8s)   |
 | MONITOR | Metrics, token usage, cost analysis, optimization recommendations                     |
 
 The BUILD agent is a long-running [deepagents](https://pypi.org/project/deepagents/)
@@ -70,8 +70,8 @@ Session commands: `/new`, `/switch <id>`, `/session`, `/exit`.
 ### Typical flow
 
 1. Describe the project — the DESIGN agent asks clarifying questions and, once
-   approved, saves `architecture.md`.
-2. Say "build it" — the BUILD agent reads `architecture.md`, loads the relevant
+   approved, saves `pdr.md`.
+2. Say "build it" — the BUILD agent reads `pdr.md`, loads the relevant
    skills, and writes IaC into the `artifacts/` directory.
 3. Apply the output: `terraform init/plan/apply`, `docker compose up`.
 

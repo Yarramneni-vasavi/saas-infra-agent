@@ -10,7 +10,7 @@ Built on deepagents' create_deep_agent for long-running plan-and-execute runs:
   SKILL.md read on demand).
 - FilesystemMiddleware gives ls/read_file/write_file/edit_file/glob/grep over
   a composite backend: the project root (read) with the skills library mounted
-  read-only at /skills/. Writes are permission-limited to the artifact dir.
+  read-only at /skills/. Writes are permission-limited to configured output paths.
 
 For isolated testing without the rest of the package, use
 build_agent_standalone.py at the repo root instead.
@@ -47,7 +47,8 @@ SKILL_SOURCES = [
 ]
 
 
-BUILD_SYSTEM_PROMPT = """You are the BUILD agent for a SaaS infrastructure assistant.
+def _build_system_prompt(pdr_paths_hint: str) -> str:
+    return f"""You are the BUILD agent for a SaaS infrastructure assistant.
 
 You turn an already-approved architecture plan into runnable Infrastructure as
 Code. You do NOT decide the stack — that is the DESIGN agent's job.
@@ -65,7 +66,7 @@ be resumed exactly where it stopped.
      asks to start over or changes the requirements.
 2. Model the plan as a DAG. Each task has a unique kebab-case id, a one-line
    description, and depends_on listing the task ids that must finish first:
-   - Reading the architecture doc and loading skills come first; every
+   - Reading the pdr.md doc and loading skills come first; every
      artifact-file task depends on them; the final summary task depends on all
      artifact tasks.
    - Independent artifact files (e.g. main.tf vs Dockerfile) must NOT depend
@@ -83,7 +84,7 @@ be resumed exactly where it stopped.
 
 ## Workflow
 
-1. Read the plan: read_file on /architecture.md (or /arch.md) and treat it as
+1. Read the plan: read_file on {pdr_paths_hint} and treat it as
    the source of truth for the stack, sizing, and cost constraints.
    - If neither file exists, stop: tell the user a design is needed first and
      suggest switching to the DESIGN agent. Never invent a stack yourself.
@@ -96,15 +97,17 @@ be resumed exactly where it stopped.
    - terraform-module-library for module structure,
    - cost-optimization for tagging and right-sizing defaults.
    Only load skills relevant to this plan — not all of them.
-4. Generate the artifacts with write_file, one file at a time, under /artifacts/
-   (the only writable location):
-   - /artifacts/infra/main.tf        cloud resources (compute, storage, networking, DBs)
-   - /artifacts/infra/variables.tf   tunable inputs (region, instance size, environment)
-   - /artifacts/infra/outputs.tf     endpoints, ARNs, connection strings
-   - /artifacts/infra/versions.tf    pinned terraform + provider versions
-   - /artifacts/Dockerfile           if the stack implies an application/service layer
-   - /artifacts/docker-compose.yml   for local dev / multi-service orchestration, if useful
-   - /artifacts/k8s/*.yaml           only when the deployment target is Kubernetes
+4. Generate the artifacts with write_file, one file at a time, under / (the current
+   working directory):
+   - /infra/main.tf        cloud resources (compute, storage, networking, DBs)
+   - /infra/variables.tf   tunable inputs (region, instance size, environment)
+   - /infra/outputs.tf     endpoints, ARNs, connection strings
+   - /infra/versions.tf    pinned terraform + provider versions
+   - /Dockerfile           if the stack implies an application/service layer
+   - /docker-compose.yml   for local dev / multi-service orchestration, if useful
+   - /k8s/*.yaml           only when the deployment target is Kubernetes
+   IMPORTANT: Never use absolute OS paths (e.g. C:\\... or \\\\?\\V:\\...).
+   Only write to virtual paths (leading /) like /docker-compose.yml.
 5. Reply with a short summary: the files you generated and the commands to apply
    them (terraform init/plan/apply, docker compose up) — not the file contents.
 
@@ -121,6 +124,9 @@ be resumed exactly where it stopped.
 """
 
 
+BUILD_SYSTEM_PROMPT = _build_system_prompt("/pdr.md")
+
+
 def _build_cfg() -> dict:
     agent_cfg = dict(config.get("agent") or {})
     agent_cfg.update(agent_cfg.get("build") or {})
@@ -129,12 +135,25 @@ def _build_cfg() -> dict:
 
 def create_build_agent():
     agent_cfg = _build_cfg()
-    artifact_dir = agent_cfg.get("artifact_dir", "artifacts")
+    artifact_dir = str(agent_cfg.get("artifact_dir", ".") or ".").strip()
+    artifact_dir_norm = artifact_dir.strip().strip("/")
 
     backend = CompositeBackend(
         default=FilesystemBackend(root_dir=Path.cwd(), virtual_mode=True),
         routes={"/skills/": FilesystemBackend(root_dir=SKILLS_ROOT, virtual_mode=True)},
     )
+
+    if artifact_dir_norm in {"", "."}:
+        write_allow_paths = [
+            "/infra/**",
+            "/k8s/**",
+            "/Dockerfile",
+            "/docker-compose.yml",
+            "/compose.yaml",
+            "/.env.example",
+        ]
+    else:
+        write_allow_paths = [f"/{artifact_dir_norm}/**"]
 
     permissions = [
         # Secrets and internals stay out of the model's context.
@@ -143,15 +162,19 @@ def create_build_agent():
             paths=["/.env", "/**/.env", "/.git/**", "/.memory/**"],
             mode="deny",
         ),
-        # Writes only under the artifact directory (first match wins).
-        FilesystemPermission(operations=["write"], paths=[f"/{artifact_dir}/**"], mode="allow"),
+        # Writes only under the allowed output paths (first match wins).
+        FilesystemPermission(operations=["write"], paths=write_allow_paths, mode="allow"),
         FilesystemPermission(operations=["write"], paths=["/**"], mode="deny"),
     ]
 
     agent = create_deep_agent(
         model=get_llm(),
         tools=[search_codebase, request_plan_approval, write_tasks, read_tasks],
-        system_prompt=BUILD_SYSTEM_PROMPT,
+        system_prompt=_build_system_prompt(
+            "/pdr.md"
+            if artifact_dir_norm in {"", "."}
+            else f"/pdr.md (or /{artifact_dir_norm}/pdr.md)"
+        ),
         backend=backend,
         skills=SKILL_SOURCES,
         permissions=permissions,
