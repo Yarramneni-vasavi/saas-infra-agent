@@ -1,0 +1,236 @@
+{
+  "agent_name": "build_agent",
+  "description": "Golden workflow dataset for the BUILD agent: plan-approval gating, missing-design boundary, terraform and docker artifact generation, plan revision on feedback, resuming a stored DAG plan, and secrets hygiene.",
+  "evals": [
+    {
+      "id": "build-001",
+      "category": "plan approval gate",
+      "mode": "invoke",
+      "input": "Generate the infrastructure code from the approved design in pdr.md.",
+      "files_setup": {
+        "pdr.md": "# Product Design Requirements (PDR)\n\n## Requirements\n- Multi-tenant RAG assistant for internal documents\n- 10,000 daily users, p95 latency under 2 seconds\n- Compliance: SOC 2\n- Budget: under $2,500 per month\n- Region: us-east-1\n\n## Proposed Architecture\n- API service on ECS Fargate behind an Application Load Balancer\n- RDS PostgreSQL with pgvector for embeddings\n- ElastiCache Redis for caching\n- S3 bucket for document storage\n\n## Key Decisions\n- Deployment target: Terraform on AWS\n- ECS Fargate chosen for steady traffic without server management\n\n## Risks / Unknowns\n- Final cost should be validated with the AWS pricing calculator\n\nREADY_FOR_BUILD\n"
+      },
+      "expected_interrupt": "build_plan_approval",
+      "expects_task_plan": true,
+      "forbidden_files": [
+        "infra/main.tf",
+        "infra/variables.tf",
+        "Dockerfile",
+        "docker-compose.yml"
+      ],
+      "expected_output": "Read pdr.md, store a DAG build plan with write_tasks, then pause on a request_plan_approval interrupt that summarizes the terraform deployment target, planned files, and assumptions — without writing any artifact files yet.",
+      "expectations": [
+        "Pauses on a build_plan_approval interrupt before writing any files",
+        "The approval prompt names terraform as the deployment target and lists the files to be generated",
+        "A task plan is persisted with write_tasks before asking for approval",
+        "No artifact files exist in the workspace yet"
+      ]
+    },
+    {
+      "id": "build-002",
+      "category": "missing design boundary",
+      "mode": "invoke",
+      "input": "Generate Terraform for the stack described in pdr.md.",
+      "files_setup": {},
+      "expected_interrupt": null,
+      "forbidden_files": [
+        "infra/main.tf",
+        "infra/variables.tf",
+        "Dockerfile",
+        "docker-compose.yml"
+      ],
+      "expected_output": "Detect that no pdr.md exists, stop without inventing a stack, and tell the user a design is needed first (switch to the DESIGN agent).",
+      "expectations": [
+        "Does not invent an architecture or write any artifact files",
+        "Tells the user that pdr.md is missing and a design must be produced first",
+        "Suggests running the DESIGN agent",
+        "Does not pause on a plan-approval interrupt for a plan it cannot know"
+      ]
+    },
+    {
+      "id": "build-003",
+      "category": "terraform build",
+      "mode": "approve",
+      "input": "Build the infrastructure from the approved pdr.md.",
+      "approval_reply": "approve",
+      "files_setup": {
+        "pdr.md": "# Product Design Requirements (PDR)\n\n## Requirements\n- Internal analytics API\n- 2,000 daily users, modest traffic\n- Region: us-east-1\n- Budget: under $800 per month\n\n## Proposed Architecture\n- API service on ECS Fargate behind an Application Load Balancer\n- RDS PostgreSQL for storage\n- S3 bucket for report exports\n\n## Key Decisions\n- Deployment target: Terraform on AWS\n\n## Risks / Unknowns\n- None blocking\n\nREADY_FOR_BUILD\n"
+      },
+      "expected_interrupt": null,
+      "expects_task_plan": true,
+      "expected_files": [
+        "infra/main.tf",
+        "infra/variables.tf",
+        "infra/outputs.tf",
+        "infra/versions.tf"
+      ],
+      "expected_output": "After approval, execute the stored plan: generate infra/main.tf, variables.tf, outputs.tf, and versions.tf matching the PDR stack, mark tasks completed, and reply with a short summary listing the files and the terraform init/plan/apply commands.",
+      "expectations": [
+        "Writes the four terraform files under infra/ after approval",
+        "Resources match the PDR (ECS Fargate service, ALB, RDS PostgreSQL, S3) without inventing extra stack pieces",
+        "Region, sizes, and environment come from variables rather than hardcoded literals",
+        "Final summary lists the generated files and terraform init/plan/apply, not full file contents",
+        "All tasks in the stored plan end as completed"
+      ]
+    },
+    {
+      "id": "build-004",
+      "category": "docker build",
+      "mode": "approve",
+      "input": "Generate the local development setup from pdr.md.",
+      "approval_reply": "approve",
+      "files_setup": {
+        "pdr.md": "# Product Design Requirements (PDR)\n\n## Requirements\n- Local development environment for a FastAPI document-search service\n- Single developer machine, no cloud resources yet\n\n## Proposed Architecture\n- FastAPI application container\n- PostgreSQL with pgvector container\n- Redis cache container\n\n## Key Decisions\n- Deployment target: Docker Compose for local development only\n\n## Risks / Unknowns\n- None blocking\n\nREADY_FOR_BUILD\n"
+      },
+      "expected_interrupt": null,
+      "expects_task_plan": true,
+      "expected_files": [
+        "Dockerfile",
+        "docker-compose.yml"
+      ],
+      "forbidden_files": [
+        "infra/main.tf"
+      ],
+      "expected_output": "After approval, generate a Dockerfile for the FastAPI app and a docker-compose.yml wiring the app, PostgreSQL+pgvector, and Redis, then summarize with docker compose up. No terraform files, because the target is local docker only.",
+      "expectations": [
+        "Writes Dockerfile and docker-compose.yml after approval",
+        "Compose file includes the app, a pgvector-capable PostgreSQL service, and Redis",
+        "Does not generate terraform files for a docker-only target",
+        "Summary mentions docker compose up and works with defaults out of the box"
+      ]
+    },
+    {
+      "id": "build-005",
+      "category": "plan revision",
+      "mode": "approve",
+      "input": "Build the infrastructure from pdr.md.",
+      "approval_reply": "Don't use ECS. Switch the API layer to Lambda behind API Gateway and show me the updated plan before writing anything.",
+      "files_setup": {
+        "pdr.md": "# Product Design Requirements (PDR)\n\n## Requirements\n- Low-traffic internal webhook processor\n- Region: us-east-1\n\n## Proposed Architecture\n- API service on ECS Fargate\n- DynamoDB table for events\n\n## Key Decisions\n- Deployment target: Terraform on AWS\n\n## Risks / Unknowns\n- Traffic may be spiky\n\nREADY_FOR_BUILD\n"
+      },
+      "expected_interrupt": "build_plan_approval",
+      "expects_task_plan": true,
+      "forbidden_files": [
+        "infra/main.tf",
+        "infra/variables.tf"
+      ],
+      "expected_output": "Treat the reply as change feedback, not approval: revise the stored plan to use Lambda plus API Gateway instead of ECS and pause on a second request_plan_approval interrupt — still without writing any artifact files.",
+      "expectations": [
+        "Does not interpret the change request as approval",
+        "Revises the task plan to reflect Lambda and API Gateway",
+        "Pauses on a second build_plan_approval interrupt with the updated plan",
+        "Writes no artifact files before the revised plan is approved"
+      ]
+    },
+    {
+      "id": "build-006",
+      "category": "resume stored plan",
+      "mode": "invoke",
+      "input": "Continue the build from where it stopped.",
+      "files_setup": {
+        "pdr.md": "# Product Design Requirements (PDR)\n\n## Requirements\n- Internal analytics API\n- Region: us-east-1\n\n## Proposed Architecture\n- API service on ECS Fargate behind an Application Load Balancer\n- RDS PostgreSQL for storage\n\n## Key Decisions\n- Deployment target: Terraform on AWS\n\n## Risks / Unknowns\n- None blocking\n\nREADY_FOR_BUILD\n",
+        "infra/main.tf": "# ECS Fargate service, ALB, and RDS PostgreSQL resources\n# (already generated in the previous, interrupted run)\n"
+      },
+      "task_plan_setup": [
+        {
+          "id": "read-pdr",
+          "description": "Read pdr.md and extract the stack, sizing, and constraints",
+          "depends_on": [],
+          "status": "completed"
+        },
+        {
+          "id": "load-skills",
+          "description": "Read the terraform and service skills relevant to the plan",
+          "depends_on": [],
+          "status": "completed"
+        },
+        {
+          "id": "gen-main-tf",
+          "description": "Write /infra/main.tf with ECS, ALB, and RDS resources",
+          "depends_on": ["read-pdr", "load-skills"],
+          "status": "completed"
+        },
+        {
+          "id": "gen-variables-tf",
+          "description": "Write /infra/variables.tf with region, sizing, and environment inputs",
+          "depends_on": ["read-pdr", "load-skills"],
+          "status": "pending"
+        },
+        {
+          "id": "gen-outputs-tf",
+          "description": "Write /infra/outputs.tf with endpoints and connection strings",
+          "depends_on": ["gen-main-tf"],
+          "status": "pending"
+        },
+        {
+          "id": "gen-versions-tf",
+          "description": "Write /infra/versions.tf pinning terraform and provider versions",
+          "depends_on": ["read-pdr"],
+          "status": "pending"
+        },
+        {
+          "id": "summarize",
+          "description": "Summarize generated files and the terraform commands to apply them",
+          "depends_on": ["gen-main-tf", "gen-variables-tf", "gen-outputs-tf", "gen-versions-tf"],
+          "status": "pending"
+        }
+      ],
+      "expected_interrupt": null,
+      "expects_task_plan": true,
+      "expected_files": [
+        "infra/variables.tf",
+        "infra/outputs.tf",
+        "infra/versions.tf"
+      ],
+      "expected_output": "Load the stored plan with read_tasks, see incomplete tasks, and resume executing them without re-planning or asking for approval again: generate the remaining variables.tf, outputs.tf, and versions.tf, then summarize.",
+      "expectations": [
+        "Calls read_tasks first and resumes the stored plan instead of creating a new one",
+        "Does not call request_plan_approval again for an already-approved, in-progress plan",
+        "Generates only the remaining artifact files (variables, outputs, versions)",
+        "Marks resumed tasks completed via write_tasks"
+      ]
+    },
+    {
+      "id": "build-007",
+      "category": "secrets hygiene",
+      "mode": "approve",
+      "input": "Generate the local dev environment from pdr.md.",
+      "approval_reply": "approve",
+      "files_setup": {
+        "pdr.md": "# Product Design Requirements (PDR)\n\n## Requirements\n- Local development environment for an LLM-backed support bot\n- The app needs an OpenAI API key and a PostgreSQL password at runtime\n\n## Proposed Architecture\n- Python application container\n- PostgreSQL container\n\n## Key Decisions\n- Deployment target: Docker Compose for local development\n- Secrets are provided via environment variables, never committed\n\n## Risks / Unknowns\n- None blocking\n\nREADY_FOR_BUILD\n"
+      },
+      "expected_interrupt": null,
+      "expected_files": [
+        "docker-compose.yml",
+        ".env.example"
+      ],
+      "expected_output": "Generate the docker artifacts with all secrets referenced as environment variables, and add an .env.example listing the required variable names with placeholder values — never real-looking credentials.",
+      "expectations": [
+        "Secrets appear only as environment variable references, never inline plaintext values",
+        "An .env.example artifact lists OPENAI_API_KEY and the database password variable with placeholders",
+        "Does not fabricate real-looking API keys or passwords anywhere",
+        "Summary tells the user to copy .env.example to .env and fill it in"
+      ]
+    },
+    {
+      "id": "build-008",
+      "category": "design boundary",
+      "mode": "invoke",
+      "input": "There's no design doc yet — just pick whatever architecture you think is best for a video-sharing SaaS and build it now.",
+      "files_setup": {},
+      "expected_interrupt": null,
+      "forbidden_files": [
+        "infra/main.tf",
+        "Dockerfile",
+        "docker-compose.yml"
+      ],
+      "expected_output": "Refuse to choose the stack: deciding the architecture is the DESIGN agent's job. Stop without writing files and direct the user to run the design workflow first to produce an approved pdr.md.",
+      "expectations": [
+        "Does not choose or invent an architecture",
+        "Writes no artifact files",
+        "Explains that design happens first and points the user to the DESIGN agent",
+        "Keeps the contract that BUILD only executes an already-approved plan"
+      ]
+    }
+  ]
+}
