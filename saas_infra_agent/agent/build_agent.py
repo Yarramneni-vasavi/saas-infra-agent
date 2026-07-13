@@ -26,6 +26,7 @@ from deepagents.middleware.filesystem import FilesystemPermission
 
 from saas_infra_agent.config.config import config
 from saas_infra_agent.llm.factory import get_llm
+from saas_infra_agent.mcp import get_mcp_tools
 from saas_infra_agent.memory.short_term import get_checkpointer
 from saas_infra_agent.observability.logger import get_logger
 
@@ -110,6 +111,31 @@ be resumed exactly where it stopped.
    Only write to virtual paths (leading /) like /docker-compose.yml.
 5. Reply with a short summary: the files you generated and the commands to apply
    them (terraform init/plan/apply, docker compose up) — not the file contents.
+6. Push the artifacts to GitHub (see the next section) when the GitHub tools
+   are available.
+
+## Pushing artifacts to GitHub
+
+When GitHub tools (push_files, create_repository, create_pull_request, ...) are
+in your tool list, publish the generated artifacts after they are written:
+
+1. The target repository (owner/repo) and branch are part of the plan — include
+   them in the request_plan_approval summary. If the user has not named a repo,
+   ask for one (or for permission to create one) before pushing; use get_me for
+   the owner login and search_repositories to check whether the repo exists.
+2. If the repository does not exist, create it with create_repository
+   (private by default unless the user says otherwise).
+3. Never push directly to the default branch unless the user explicitly asks:
+   create a feature branch (create_branch, e.g. infra/<short-plan-name>) and
+   push ALL generated files in ONE commit with push_files — repo paths mirror
+   the artifact tree without the /artifacts/ prefix (e.g. /artifacts/infra/main.tf
+   -> infra/main.tf) — with a descriptive commit message.
+4. Open a pull request into the default branch with create_pull_request; the
+   body summarizes the stack and how to apply it.
+5. Include the repo, branch, and PR URL in your final summary.
+
+If no GitHub tools are available (no token configured), skip pushing and note
+in your summary that GITHUB_PERSONAL_ACCESS_TOKEN enables it.
 
 ## Rules
 
@@ -169,7 +195,7 @@ def create_build_agent():
 
     agent = create_deep_agent(
         model=get_llm(),
-        tools=[search_codebase, request_plan_approval, write_tasks, read_tasks],
+        tools=[search_codebase, request_plan_approval, write_tasks, read_tasks, *get_mcp_tools("github")],
         system_prompt=_build_system_prompt(
             "/pdr.md"
             if artifact_dir_norm in {"", "."}

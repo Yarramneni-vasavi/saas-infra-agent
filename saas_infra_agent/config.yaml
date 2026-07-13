@@ -37,3 +37,22 @@ agent:
 web_search:
   provider: tavily
   timeout_s: 10                          # used by DuckDuckGo fallback only
+
+mcp:
+  github:
+    # http = GitHub's hosted MCP server (nothing to install);
+    # stdio = same server run locally via Docker (ghcr.io/github/github-mcp-server).
+    # Both need GITHUB_PERSONAL_ACCESS_TOKEN in .env.
+    transport: http
+    url: https://api.githubcopilot.com/mcp/
+    # Keep the agent's tool surface small: only what pushing artifacts needs.
+    allowed_tools:
+      - get_me
+      - search_repositories
+      - create_repository
+      - list_branches
+      - create_branch
+      - get_file_contents
+      - create_or_update_file
+      - push_files
+      - create_pull_request
