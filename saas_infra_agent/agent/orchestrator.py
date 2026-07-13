@@ -14,15 +14,17 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 from pathlib import Path
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from saas_infra_agent.agent.agents import AgentKind, get_agent
 from saas_infra_agent.llm.factory import get_small_llm
+from saas_infra_agent.memory.short_term import get_checkpointer
 from saas_infra_agent.config.config import config
 from saas_infra_agent.agent.safetygate import check_safety, SafetyFlag
+from saas_infra_agent.agent.domaingate import check_domain
 from saas_infra_agent.observability.logger import get_logger
 from langgraph.types import Command
 
@@ -55,13 +57,14 @@ class OrchestratorOutput:
     clarification_question: Optional[str]
     safety_flag: SafetyFlag
     reasoning: str
+    directive: Optional[dict[str, str]] = None
 
 
 _CLASSIFY_SYSTEM_PROMPT = """You are the orchestrator for an infrastructure \
 assistant with four downstream agents:
 
 - design: designing an architecture for an application, or a solution to an \
-existing infra problem. Produces Architecture.md.
+existing infra problem. Produces pdr.md.
 - build: building, deploying, fixing bug, or writing code for an architecture (given by \
 the user or produced by design), enhancing existing deployment code, or \
 creating dashboards for existing infra.
@@ -95,6 +98,52 @@ _NEW_TOPIC_MARKERS = [
 ]
 
 _YES_WORDS = {"yes", "y", "yes proceed", "proceed", "continue", "ok", "okay"}
+_NO_WORDS = {"no", "n", "nope", "nah", "cancel", "stop"}
+
+
+def _tokenize(text: str) -> list[str]:
+    t = text.lower().strip()
+    cleaned = "".join(ch if (ch.isalnum() or ch.isspace()) else " " for ch in t)
+    return cleaned.split()
+
+
+def _looks_affirmative(text: str) -> bool:
+    tokens = _tokenize(text)
+    if not tokens:
+        return False
+    if any(t in tokens for t in _NO_WORDS):
+        return False
+    if "not" in tokens and any(t in tokens for t in {"ok", "okay", "approve", "approved", "yes"}):
+        return False
+    return any(
+        t in tokens
+        for t in {
+            "ok",
+            "okay",
+            "yes",
+            "y",
+            "approve",
+            "approved",
+            "good",
+            "fine",
+            "continue",
+            "proceed",
+        }
+    )
+
+
+def _design_directive(awaiting_kind: str | None, user_reply: str) -> dict[str, str] | None:
+    if not awaiting_kind:
+        return None
+    if awaiting_kind == "clarify":
+        return {"kind": awaiting_kind, "action": "answer"}
+    if awaiting_kind == "requirements_confirm":
+        return {"kind": awaiting_kind, "action": "confirm" if _looks_affirmative(user_reply) else "changes"}
+    if awaiting_kind == "architecture_feedback":
+        return {"kind": awaiting_kind, "action": "accept" if _looks_affirmative(user_reply) else "changes"}
+    if awaiting_kind == "approve":
+        return {"kind": awaiting_kind, "action": "approve" if _looks_affirmative(user_reply) else "changes"}
+    return None
 
 
 def _looks_like_new_topic(query: str) -> bool:
@@ -106,6 +155,69 @@ def _state_dir() -> Path:
     state_dir = Path(config["memory"]["db_path"]).parent / "orchestrator_state"
     state_dir.mkdir(parents=True, exist_ok=True)
     return state_dir
+
+
+def _build_waiting_for_approval(thread_id: str) -> bool:
+    """True when the BUILD agent is paused on a request_plan_approval interrupt."""
+    return pending_approval_prompt(thread_id) is not None
+
+
+def pending_approval_prompt(thread_id: str) -> str | None:
+    """The human-facing prompt of the interrupt this thread is paused on, if any.
+
+    A pending interrupt survives CLI restarts (it lives in the checkpointer), so
+    the CLI uses this on startup to re-display what the next message will answer.
+    """
+    checkpoint_tuple = get_checkpointer().get_tuple({"configurable": {"thread_id": thread_id}})
+    if not checkpoint_tuple or not checkpoint_tuple.pending_writes:
+        return None
+    for _, channel, value in checkpoint_tuple.pending_writes:
+        if channel != "__interrupt__":
+            continue
+        interrupts = value if isinstance(value, (list, tuple)) else [value]
+        for intr in interrupts:
+            payload = getattr(intr, "value", intr)
+            if isinstance(payload, dict) and isinstance(payload.get("prompt"), str):
+                return payload["prompt"]
+            return str(payload)
+    return None
+
+
+def pending_interrupt_payload(thread_id: str) -> Any | None:
+    """The raw interrupt payload this thread is paused on, if any."""
+    checkpoint_tuple = get_checkpointer().get_tuple({"configurable": {"thread_id": thread_id}})
+    if not checkpoint_tuple or not checkpoint_tuple.pending_writes:
+        return None
+    for _, channel, value in checkpoint_tuple.pending_writes:
+        if channel != "__interrupt__":
+            continue
+        interrupts = value if isinstance(value, (list, tuple)) else [value]
+        for intr in interrupts:
+            return getattr(intr, "value", intr)
+    return None
+
+
+def pending_interrupt_kind(thread_id: str) -> str | None:
+    payload = pending_interrupt_payload(thread_id)
+    if isinstance(payload, dict):
+        kind = payload.get("kind")
+        if isinstance(kind, str):
+            return kind
+        kind = payload.get("type")
+        if isinstance(kind, str):
+            return kind
+    return None
+
+
+def _interrupt_prompt(result: dict) -> str | None:
+    """Extract the human-facing prompt when an agent run paused on an interrupt."""
+    interrupts = result.get("__interrupt__") or []
+    if not interrupts:
+        return None
+    payload = interrupts[0].value
+    if isinstance(payload, dict) and isinstance(payload.get("prompt"), str):
+        return payload["prompt"]
+    return str(payload)
 
 
 def _state_path(thread_id: str) -> Path:
@@ -182,8 +294,21 @@ def _clear_inflight_query(state: SessionState) -> None:
     state.last_failure = ""
 
 
+def _artifact_root() -> Path:
+    agent_cfg = dict(config.get("agent") or {})
+    artifact_dir = str(agent_cfg.get("artifact_dir", ".") or ".").strip()
+    artifact_dir_norm = artifact_dir.strip().strip("/")
+    if artifact_dir_norm in {"", "."}:
+        return Path.cwd()
+    return Path.cwd() / artifact_dir_norm
+
+
+def _pdr_path() -> Path:
+    return _artifact_root() / "pdr.md"
+
+
 def _build_architecture_exists() -> bool:
-    return (Path.cwd() / "architecture.md").exists() or (Path.cwd() / "arch.md").exists()
+    return _pdr_path().exists()
 
 
 def _is_continuation(query: str, state: SessionState) -> bool:
@@ -271,16 +396,16 @@ def route(query: str, state: SessionState) -> OrchestratorOutput:
         )
 
     # 2. Cheap continuation check -- fast-path, no reclassification call.
-    # if _is_continuation(query, state):
-    #     return OrchestratorOutput(
-    #         intent=state.last_active_agent,
-    #         confidence=1.0,
-    #         is_continuation=True,
-    #         requires_clarification=False,
-    #         clarification_question=None,
-    #         safety_flag=safety.flag,
-    #         reasoning="Continuation of active agent session.",
-    #     )
+    if state.awaiting_agent_input and _is_continuation(query, state):
+        return OrchestratorOutput(
+            intent=state.last_active_agent,
+            confidence=1.0,
+            is_continuation=True,
+            requires_clarification=False,
+            clarification_question=None,
+            safety_flag=safety.flag,
+            reasoning="Continuation of active agent session.",
+        )
 
     # 3. New/ambiguous topic -- full classification.
     result = _classify(query, state)
@@ -291,6 +416,14 @@ def route(query: str, state: SessionState) -> OrchestratorOutput:
 def handle_query(query: str, thread_id: str) -> str:
     """CLI entry point with persisted session state and safety-review interrupt."""
     state = load_session_state(thread_id)
+
+    # If the design graph is paused on an interrupt, treat this thread as awaiting
+    # agent input even across CLI restarts (the interrupt lives in the checkpointer).
+    design_thread_id = _agent_thread_id(thread_id, "design")
+    if pending_interrupt_payload(design_thread_id) is not None:
+        state.last_active_agent = state.last_active_agent or "design"
+        state.awaiting_agent_input = True
+        save_session_state(thread_id, state)
 
     if state.pending_review_query is not None:
         if query.strip().lower() in _YES_WORDS:
@@ -329,12 +462,71 @@ def handle_query(query: str, thread_id: str) -> str:
         save_session_state(thread_id, state)
         return cancel_msg
 
+    domain = check_domain(query)
+    if domain.flag == "out_of_domain":
+        reply = (
+            "This CLI only supports SaaS infrastructure topics (design/build/monitor). "
+            "I can’t help with consumer tasks like shopping/orders. "
+            "Ask about AWS/Terraform/Kubernetes/deployments/monitoring instead."
+        )
+        _append_summary(state, query, reply)
+        _clear_inflight_query(state)
+        save_session_state(thread_id, state)
+        return reply
+
+    # A build paused for plan approval owns the next reply -- resume it instead
+    # of routing the approval answer through intent classification. The safety
+    # gate still runs on the reply before it reaches the agent.
+    if _build_waiting_for_approval(thread_id):
+        domain = check_domain(query)
+        if domain.flag == "out_of_domain":
+            reply = (
+                "This CLI only supports SaaS infrastructure topics (design/build/monitor). "
+                "I can’t help with consumer tasks like shopping/orders."
+            )
+            _append_summary(state, query, reply)
+            save_session_state(thread_id, state)
+            return reply
+
+        safety = check_safety(query)
+        if safety.flag == "block":
+            reply = f"Blocked by safety gate: {safety.reasoning}"
+            _append_summary(state, query, reply)
+            save_session_state(thread_id, state)
+            return reply
+
+        agent = get_agent(AgentKind.BUILD)
+        agent_config = {"configurable": {"thread_id": _agent_thread_id(thread_id, "build")}}
+        build_result = agent.invoke(Command(resume=query), agent_config)
+        reply = _interrupt_prompt(build_result) or build_result["messages"][-1].content
+        state.last_active_agent = "build"
+        _append_summary(state, query, reply)
+        save_session_state(thread_id, state)
+        return reply
+
     _mark_inflight_query(thread_id, state, query)
 
     try:
         result = route(query, state)
         state.pending_routed_intent = result.intent
         save_session_state(thread_id, state)
+
+        if result.intent == "build" and not _build_architecture_exists():
+            # Auto-fallback: if the user asked to build but there's no PDR yet,
+            # route to Design to generate it (instead of forcing the user to
+            # explicitly switch intent).
+            logger.info(
+                "No pdr.md found at %s; routing build request to design.",
+                _pdr_path().as_posix(),
+            )
+            result.intent = "design"
+            result.confidence = 1.0
+            result.is_continuation = False
+            result.requires_clarification = False
+            result.clarification_question = None
+            result.reasoning = "No PDR found; routing to design first."
+            state.pending_routed_intent = "design"
+            save_session_state(thread_id, state)
 
         if result.safety_flag == "block":
             reply = f"Blocked by safety gate: {result.reasoning}"
@@ -361,6 +553,10 @@ def handle_query(query: str, thread_id: str) -> str:
             save_session_state(thread_id, state)
             return reply
 
+        if result.intent == "design" and state.awaiting_agent_input:
+            awaiting_kind = pending_interrupt_kind(design_thread_id)
+            result.directive = _design_directive(awaiting_kind, query)
+
         logger.info(
             "Orchestrator output before dispatch: %s",
             {
@@ -373,6 +569,7 @@ def handle_query(query: str, thread_id: str) -> str:
                 "clarification_question": result.clarification_question,
                 "safety_flag": result.safety_flag,
                 "reasoning": result.reasoning,
+                "directive": result.directive,
                 "session_state": {
                     "last_active_agent": state.last_active_agent,
                     "arch_md_exists": state.arch_md_exists,
@@ -414,24 +611,25 @@ def _dispatch(query: str, result: OrchestratorOutput, state: SessionState, threa
     if result.intent == "design":
         design_input = {"user_message": query}
         if state.awaiting_agent_input:
-            design_result = agent.invoke(Command(resume=query), agent_config)
+            resume_payload: Any = query
+            if result.directive is not None:
+                resume_payload = {"text": query, "directive": result.directive}
+            design_result = agent.invoke(Command(resume=resume_payload), agent_config)
         else:
             design_result = agent.invoke(design_input, agent_config)
 
         state.awaiting_agent_input = bool(design_result.get("__interrupt__"))
         state.arch_md_exists = _build_architecture_exists()
 
-        if "__interrupt__" in design_result and design_result["__interrupt__"]:
-            payload = design_result["__interrupt__"][0].value
-            if isinstance(payload, dict) and isinstance(payload.get("prompt"), str):
-                return payload["prompt"]
-            return str(payload)
+        prompt = _interrupt_prompt(design_result)
+        if prompt is not None:
+            return prompt
         return (design_result.get("assistant_output") or "").strip() or "OK"
 
     response = agent.invoke({"messages": [HumanMessage(content=query)]}, agent_config)
     state.awaiting_agent_input = False
     state.arch_md_exists = _build_architecture_exists()
-    return response["messages"][-1].content
+    return _interrupt_prompt(response) or response["messages"][-1].content
 
 
 def _agent_thread_id(thread_id: str, intent: Agent) -> str:

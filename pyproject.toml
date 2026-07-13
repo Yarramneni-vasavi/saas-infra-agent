@@ -22,6 +22,10 @@ deepagents = "^0.6.11"
 
 [tool.poetry.scripts]
 saas-cli = "saas_infra_agent.main:main"
+saas-evals = "saas_infra_agent.evals.run_deepeval:main"
+
+[tool.poetry.group.evals.dependencies]
+deepeval = "*"
 
 [build-system]
 requires = ["poetry-core"]

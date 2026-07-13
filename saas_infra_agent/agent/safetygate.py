@@ -28,6 +28,7 @@ _HARD_BLOCK_PATTERNS = [
     r"\bbypass (auth|authentication|security controls?)\b",
     r"\bexfiltrate (data|credentials)\b",
 ]
+_HARD_BLOCK_REGEXES = [re.compile(p) for p in _HARD_BLOCK_PATTERNS]
 
 # Words worth a second look, but never blockable on their own -- "pen test",
 # "vulnerability scan", "rotate credentials" are all legitimate infra asks.
@@ -64,11 +65,22 @@ def _extract_response_text(resp) -> str:
         return "\n".join(part.strip() for part in parts if part.strip()).strip()
     return str(content).strip()
 
-# NOT USING AS OF NOW.
+def _coerce_compact_json(text: str) -> str:
+    """Best-effort extraction of a single JSON object from a model response."""
+    t = text.strip()
+    if not t:
+        return t
+    start = t.find("{")
+    end = t.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return t
+    return t[start : end + 1]
+
+
 def _regex_prefilter(query: str) -> SafetyFlag:
     q = query.lower()
-    for pattern in _HARD_BLOCK_PATTERNS:
-        if re.search(pattern, q):
+    for rx in _HARD_BLOCK_REGEXES:
+        if rx.search(q):
             return "block"
     for trigger in _REVIEW_TRIGGERS:
         if trigger in q:
@@ -81,6 +93,12 @@ def _llm_safety_check(query: str) -> SafetyResult:
     Deliberately small: one short prompt, structured JSON out, no
     conversation history -- it only has to judge this single turn.
     """
+    max_chars = 4000
+    query_for_llm = query.strip()
+    if len(query_for_llm) > max_chars:
+        half = max_chars // 2
+        query_for_llm = f"{query_for_llm[:half]}\n...\n{query_for_llm[-half:]}"
+
     system = (
         "You are a safety gate for an infrastructure design/build/monitor "
         "assistant. Classify the user's message.\n\n"
@@ -101,13 +119,19 @@ def _llm_safety_check(query: str) -> SafetyResult:
     llm = get_small_llm()
     resp = llm.invoke([
         SystemMessage(content=system),
-        HumanMessage(content=query),
+        HumanMessage(content=query_for_llm),
     ])
 
     text = _extract_response_text(resp)
     try:
-        data = json.loads(text)
-        return SafetyResult(flag=data["flag"], reasoning=data["reasoning"])
+        data = json.loads(_coerce_compact_json(text))
+        flag = data.get("flag")
+        reasoning = data.get("reasoning", "")
+        if flag not in {"none", "needs_review", "block"}:
+            raise ValueError("Invalid safety flag.")
+        if not isinstance(reasoning, str):
+            raise ValueError("Invalid safety reasoning.")
+        return SafetyResult(flag=flag, reasoning=reasoning.strip())
     except Exception:
         # Fail closed on parse errors -- don't silently let an unparseable
         # response through as "none".
@@ -121,4 +145,9 @@ def check_safety(query: str) -> SafetyResult:
     """Entry point. Cheap regex pass first; LLM only called when the
     prefilter is ambiguous or flags something borderline.
     """
+    pre = _regex_prefilter(query)
+    if pre == "none":
+        return SafetyResult(flag="none", reasoning="")
+    if pre == "block":
+        return SafetyResult(flag="block", reasoning="Request appears to ask for unauthorized access or exploitation.")
     return _llm_safety_check(query)
