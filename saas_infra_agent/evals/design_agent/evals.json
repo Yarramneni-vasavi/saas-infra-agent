@@ -88,7 +88,7 @@
       "resume_kind": "requirements_confirm",
       "input": "Yes, that captures it correctly.",
       "state_setup": {
-        "stage": "wait",
+        "stage": "requirements",
         "awaiting_kind": "requirements_confirm",
         "awaiting_prompt": "Does this capture your requirements correctly?",
         "project_context": "User: We need a HIPAA-aware RAG assistant.",
@@ -109,7 +109,7 @@
       "resume_kind": "requirements_confirm",
       "input": "No, the budget needs to be under $1,500 and data must stay in eu-west-1.",
       "state_setup": {
-        "stage": "wait",
+        "stage": "requirements",
         "awaiting_kind": "requirements_confirm",
         "awaiting_prompt": "Does this capture your requirements correctly?",
         "project_context": "User: We need a SaaS analytics platform.",
@@ -130,7 +130,7 @@
       "resume_kind": "architecture_feedback",
       "input": "Use a more serverless approach instead of always-on ECS if that keeps ops overhead lower.",
       "state_setup": {
-        "stage": "wait",
+        "stage": "architecture",
         "awaiting_kind": "architecture_feedback",
         "awaiting_prompt": "Reply ok to proceed to key decisions, or describe what you'd like to change.",
         "project_context": "User: We need a cost-sensitive internal RAG tool.",
@@ -152,7 +152,7 @@
       "resume_kind": "approve",
       "input": "Approve.",
       "state_setup": {
-        "stage": "wait",
+        "stage": "decisions",
         "awaiting_kind": "approve",
         "awaiting_prompt": "Reply approve to save the design to pdr.md, or describe what you'd like to change.",
         "project_context": "User: We need a HIPAA-aware RAG assistant.",

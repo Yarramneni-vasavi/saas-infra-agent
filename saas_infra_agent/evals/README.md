@@ -7,6 +7,8 @@ plain JSON and easy to adapt to LangSmith, OpenAI Evals, or a custom harness.
 
 This folder also includes a local DeepEval runner:
 `saas_infra_agent/evals/run_deepeval.py`.
+It also includes a lightweight metrics runner:
+`saas_infra_agent/evals/run_metrics.py`.
 
 ## Files
 
@@ -16,6 +18,10 @@ This folder also includes a local DeepEval runner:
   `saas_infra_agent/agent/design_flow.py`.
 - `run_deepeval.py`: runs the golden datasets against local code and scores
   them with DeepEval `GEval`.
+- `run_metrics.py`: runs the datasets and outputs % pass for
+  `answer_relevancy`, `faithfulness`, `factual_correctness` (LLM-judged), plus
+  deterministic precision/recall-style stats for orchestrator intent/domain/safety
+  when `expected_*` fields are present in the dataset.
 
 ## Run
 
@@ -48,6 +54,12 @@ List available ids:
 
 ```bash
 poetry run saas-evals --list
+```
+
+Run metrics report (prints JSON):
+
+```bash
+python -m saas_infra_agent.evals.run_metrics --agent all --out .tmp_evals/metrics_report.json
 ```
 
 ## Notes
