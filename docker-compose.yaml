@@ -1,0 +1,16 @@
+name: local-aws-environment
+
+services:
+  floci:
+    image: floci/floci:latest
+    container_name: local_aws_floci
+    restart: unless-stopped
+    ports:
+      - "4566:4566"
+    volumes:
+      # Grants permission to spin up Lambda/RDS/ECS containers
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Binds to a local folder named "data" on your computer
+      - ./data:/app/data
+    environment:
+      - FLOCI_STORAGE_MODE=hybrid

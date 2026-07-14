@@ -28,7 +28,7 @@ from saas_infra_agent.agent.domaingate import check_domain
 from saas_infra_agent.observability.logger import get_logger
 from langgraph.types import Command
 
-Agent = Literal["design", "build", "monitor", "general"]
+Agent = Literal["design", "build", "monitor", "publish", "general"]
 logger = get_logger(__name__)
 
 
@@ -61,13 +61,14 @@ class OrchestratorOutput:
 
 
 _CLASSIFY_SYSTEM_PROMPT = """You are the orchestrator for an infrastructure \
-assistant with four downstream agents:
+assistant with five downstream agents:
 
 - design: designing an architecture for an application, or a solution to an \
 existing infra problem. Produces pdr.md.
 - build: building, deploying, fixing bug, or writing code for an architecture (given by \
 the user or produced by design), enhancing existing deployment code, or \
 creating dashboards for existing infra.
+- publish: publishing already-generated artifacts to GitHub (create repo/branch, push files, open PR).
 - monitor: monitoring, optimizing, or reporting performance for existing or \
 newly built infra.
 - general: simple Q&A about cloud/infra concepts, conversational questions \
@@ -80,7 +81,7 @@ user to continue toward the next step once it finishes.
 
 Return ONLY compact JSON matching this shape, no prose, no markdown fences:
 {
-  "intent": "design" | "build" | "monitor" | "general",
+  "intent": "design" | "build" | "publish" | "monitor" | "general",
   "confidence": 0.0-1.0,
   "requires_clarification": true | false,
   "clarification_question": "<string, or null>",
@@ -248,9 +249,29 @@ def _to_agent_kind(intent: Agent) -> AgentKind | None:
         return AgentKind.DESIGN
     if intent == "build":
         return AgentKind.BUILD
+    if intent == "publish":
+        return AgentKind.PUBLISH
     if intent == "monitor":
         return AgentKind.MONITOR
     return None
+
+
+def _force_intent(query: str) -> tuple[str, Agent | None]:
+    q = (query or "").strip()
+    if not q.startswith("/"):
+        return query, None
+    parts = q.split(maxsplit=1)
+    cmd = parts[0].lower()
+    rest = parts[1] if len(parts) > 1 else ""
+    if cmd == "/design":
+        return rest, "design"
+    if cmd == "/build":
+        return rest, "build"
+    if cmd == "/monitor":
+        return rest, "monitor"
+    if cmd == "/publish":
+        return rest, "publish"
+    return query, None
 
 
 def _handle_general(query: str, state: SessionState) -> str:
@@ -425,6 +446,8 @@ def handle_query(query: str, thread_id: str) -> str:
         state.awaiting_agent_input = True
         save_session_state(thread_id, state)
 
+    query, forced_intent = _force_intent(query)
+
     if state.pending_review_query is not None:
         if query.strip().lower() in _YES_WORDS:
             approved_query = state.pending_review_query
@@ -462,32 +485,11 @@ def handle_query(query: str, thread_id: str) -> str:
         save_session_state(thread_id, state)
         return cancel_msg
 
-    domain = check_domain(query)
-    if domain.flag == "out_of_domain":
-        reply = (
-            "This CLI only supports SaaS infrastructure topics (design/build/monitor). "
-            "I can’t help with consumer tasks like shopping/orders. "
-            "Ask about AWS/Terraform/Kubernetes/deployments/monitoring instead."
-        )
-        _append_summary(state, query, reply)
-        _clear_inflight_query(state)
-        save_session_state(thread_id, state)
-        return reply
-
-    # A build paused for plan approval owns the next reply -- resume it instead
-    # of routing the approval answer through intent classification. The safety
-    # gate still runs on the reply before it reaches the agent.
+    # If BUILD is paused on an interrupt (plan approval, local command approval,
+    # etc), it owns the next reply — resume it instead of routing this message
+    # through domain/intent classification. The safety gate still runs on the
+    # reply before it reaches the agent.
     if _build_waiting_for_approval(thread_id):
-        domain = check_domain(query)
-        if domain.flag == "out_of_domain":
-            reply = (
-                "This CLI only supports SaaS infrastructure topics (design/build/monitor). "
-                "I can’t help with consumer tasks like shopping/orders."
-            )
-            _append_summary(state, query, reply)
-            save_session_state(thread_id, state)
-            return reply
-
         safety = check_safety(query)
         if safety.flag == "block":
             reply = f"Blocked by safety gate: {safety.reasoning}"
@@ -504,10 +506,25 @@ def handle_query(query: str, thread_id: str) -> str:
         save_session_state(thread_id, state)
         return reply
 
+    domain = check_domain(query)
+    if domain.flag == "out_of_domain":
+        reply = (
+            "This CLI only supports SaaS infrastructure topics (design/build/monitor). "
+            "I can’t help with consumer tasks like shopping/orders. "
+            "Ask about AWS/Terraform/Kubernetes/deployments/monitoring instead."
+        )
+        _append_summary(state, query, reply)
+        _clear_inflight_query(state)
+        save_session_state(thread_id, state)
+        return reply
+
     _mark_inflight_query(thread_id, state, query)
 
     try:
         result = route(query, state)
+        if forced_intent is not None:
+            result.intent = forced_intent
+            result.confidence = 1.0
         state.pending_routed_intent = result.intent
         save_session_state(thread_id, state)
 
