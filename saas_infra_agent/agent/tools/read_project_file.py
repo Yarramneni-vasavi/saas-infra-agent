@@ -31,5 +31,7 @@ def read_project_file(path: str) -> str:
     cwd = Path.cwd().resolve()
     if cwd not in target.parents and target != cwd:
         raise ValueError("path escapes project root")
-    return target.read_text(encoding="utf-8")
-
+    try:
+        return target.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return f"File not found: {relpath.as_posix()}"

@@ -1,0 +1,189 @@
+{
+  "agent_name": "design_agent",
+  "description": "Golden workflow dataset for the interrupt-driven DESIGN agent, including clarification, requirements confirmation, architecture feedback, approval, and build-boundary behavior.",
+  "evals": [
+    {
+      "id": "design-001",
+      "category": "clarify",
+      "mode": "invoke",
+      "input": "We want a SaaS analytics platform for restaurant owners.",
+      "state_setup": {},
+      "expected_output": "Start with clarification questions that gather infrastructure-relevant PDR gaps before proposing any architecture.",
+      "files": [],
+      "expectations": [
+        "Interrupts with kind clarify",
+        "Asks infra-relevant questions such as scale, latency, compliance, budget, region, or workload shape",
+        "Does not propose AWS services or architecture yet",
+        "Does not ask about UI or unrelated business-logic details"
+      ]
+    },
+    {
+      "id": "design-002",
+      "category": "clarify",
+      "mode": "invoke",
+      "input": "We need a multi-tenant RAG assistant on AWS for internal docs. Expect 10,000 daily users, p95 under 2 seconds, HIPAA constraints, a $3,000 monthly budget, PostgreSQL plus pgvector, Redis cache, background ingestion workers, and no GPU requirement.",
+      "state_setup": {},
+      "expected_output": "Acknowledge that most major design inputs are present and either ask only the remaining PDR-gap questions or offer to proceed.",
+      "files": [],
+      "expectations": [
+        "Interrupts with kind clarify instead of jumping straight to architecture",
+        "Keeps any follow-up questions tightly focused on remaining PDR gaps",
+        "Avoids repeating details already provided by the user",
+        "Does not generate infrastructure code"
+      ]
+    },
+    {
+      "id": "design-003",
+      "category": "clarify",
+      "mode": "resume",
+      "resume_kind": "clarify",
+      "input": "Peak traffic is around 200 requests per second and we only need us-east-1.",
+      "state_setup": {
+        "stage": "clarify",
+        "awaiting_kind": "clarify",
+        "awaiting_prompt": "Question 2: What peak traffic and primary AWS region should the system support?",
+        "project_context": "User: We need a multi-tenant RAG assistant for internal docs.",
+        "pending_questions": [
+          "What compliance requirements apply?",
+          "What monthly budget ceiling should the design respect?"
+        ],
+        "last_clarify_question": "What peak traffic and primary AWS region should the system support?",
+        "clarify_asked_count": 2
+      },
+      "expected_output": "Capture the answer, keep the workflow in clarification mode, and ask the next pending question.",
+      "files": [],
+      "expectations": [
+        "Appends the answer to project_context as a Q/A style clarification",
+        "Keeps stage in clarify because pending_questions is not empty",
+        "Returns another clarify interrupt instead of moving to architecture"
+      ]
+    },
+    {
+      "id": "design-004",
+      "category": "requirements",
+      "mode": "resume",
+      "resume_kind": "clarify",
+      "input": "Budget cap is $2,500 and we need SOC 2 controls.",
+      "state_setup": {
+        "stage": "clarify",
+        "awaiting_kind": "clarify",
+        "awaiting_prompt": "Question 4: What monthly budget ceiling and compliance posture should the design assume?",
+        "project_context": "User: We need a multi-tenant RAG assistant for internal docs.",
+        "pending_questions": [],
+        "last_clarify_question": "What monthly budget ceiling and compliance posture should the design assume?",
+        "clarify_asked_count": 4
+      },
+      "expected_output": "Finish the clarification loop and advance toward drafting the requirements summary.",
+      "files": [],
+      "expectations": [
+        "Clears the final clarify interrupt",
+        "Transitions stage to requirements once no pending_questions remain",
+        "Does not skip straight to save or build"
+      ]
+    },
+    {
+      "id": "design-005",
+      "category": "requirements confirmation",
+      "mode": "resume",
+      "resume_kind": "requirements_confirm",
+      "input": "Yes, that captures it correctly.",
+      "state_setup": {
+        "stage": "wait",
+        "awaiting_kind": "requirements_confirm",
+        "awaiting_prompt": "Does this capture your requirements correctly?",
+        "project_context": "User: We need a HIPAA-aware RAG assistant.",
+        "requirements_md": "## Requirements\n- Users: 10,000 daily\n- Latency target: p95 under 2 seconds\n- Compliance: HIPAA\n- Budget: under $3,000 per month"
+      },
+      "expected_output": "Treat the reply as approval of the requirements draft and move to architecture generation, unless new PDR gaps are discovered.",
+      "files": [],
+      "expectations": [
+        "Recognizes the reply as confirmation",
+        "Advances toward architecture or a final PDR-gap clarification pass",
+        "Does not regenerate the same requirements unchanged as a rejection path"
+      ]
+    },
+    {
+      "id": "design-006",
+      "category": "requirements confirmation",
+      "mode": "resume",
+      "resume_kind": "requirements_confirm",
+      "input": "No, the budget needs to be under $1,500 and data must stay in eu-west-1.",
+      "state_setup": {
+        "stage": "wait",
+        "awaiting_kind": "requirements_confirm",
+        "awaiting_prompt": "Does this capture your requirements correctly?",
+        "project_context": "User: We need a SaaS analytics platform.",
+        "requirements_md": "## Requirements\n- Budget: under $3,000 per month\n- Region: us-east-1"
+      },
+      "expected_output": "Capture the correction and regenerate the requirements instead of moving forward with stale assumptions.",
+      "files": [],
+      "expectations": [
+        "Treats the reply as a correction, not a confirmation",
+        "Appends the budget and region correction to project_context",
+        "Loops back to the requirements stage"
+      ]
+    },
+    {
+      "id": "design-007",
+      "category": "architecture feedback",
+      "mode": "resume",
+      "resume_kind": "architecture_feedback",
+      "input": "Use a more serverless approach instead of always-on ECS if that keeps ops overhead lower.",
+      "state_setup": {
+        "stage": "wait",
+        "awaiting_kind": "architecture_feedback",
+        "awaiting_prompt": "Reply ok to proceed to key decisions, or describe what you'd like to change.",
+        "project_context": "User: We need a cost-sensitive internal RAG tool.",
+        "requirements_md": "## Requirements\n- Budget: under $1,500 per month",
+        "architecture_md": "## Proposed Architecture\n- ECS Fargate service for the API\n- RDS PostgreSQL with pgvector\n- ElastiCache Redis"
+      },
+      "expected_output": "Treat the reply as architecture-change feedback and regenerate the architecture rather than moving on to decisions.",
+      "files": [],
+      "expectations": [
+        "Does not interpret this as simple approval",
+        "Transitions back to architecture",
+        "Keeps the new serverless preference in project_context for the next draft"
+      ]
+    },
+    {
+      "id": "design-008",
+      "category": "approval",
+      "mode": "resume",
+      "resume_kind": "approve",
+      "input": "Approve.",
+      "state_setup": {
+        "stage": "wait",
+        "awaiting_kind": "approve",
+        "awaiting_prompt": "Reply approve to save the design to pdr.md, or describe what you'd like to change.",
+        "project_context": "User: We need a HIPAA-aware RAG assistant.",
+        "requirements_md": "## Requirements\n- Users: 10,000 daily\n- Compliance: HIPAA",
+        "architecture_md": "## Proposed Architecture\n- API on ECS Fargate\n- Bedrock for generation\n- OpenSearch for retrieval",
+        "decisions_md": "## Key Decisions\n- Chose ECS for steady traffic\n\n## Risks / Unknowns\n- Final cost should be validated"
+      },
+      "expected_output": "Advance to save, write pdr.md, mark the design ready for build, and tell the user to proceed with build when ready.",
+      "files": [
+        "pdr.md"
+      ],
+      "expectations": [
+        "Treats the reply as approval",
+        "Transitions to save and then done",
+        "Writes pdr.md in the isolated eval workspace",
+        "Returns a message that points the user toward the build step"
+      ]
+    },
+    {
+      "id": "design-009",
+      "category": "build boundary",
+      "mode": "invoke",
+      "input": "Skip the design doc and just generate the Terraform right now for a multi-tenant RAG stack.",
+      "state_setup": {},
+      "expected_output": "Stay in the design workflow and gather enough information for a build-ready PDR instead of emitting Terraform from the design agent.",
+      "files": [],
+      "expectations": [
+        "Does not produce IaC artifacts directly",
+        "Starts with clarify or requirements behavior inside the design workflow",
+        "Keeps the contract that build happens after the design is approved and saved"
+      ]
+    }
+  ]
+}

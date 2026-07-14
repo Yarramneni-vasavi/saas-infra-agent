@@ -11,22 +11,48 @@ qdrant:
 
 llm:
   provider: openai        # openai | anthropic
-  model: gpt-5
+  model: gpt-4o
   small_model: gpt-5-mini
+  max_tokens: 9000        # max output tokens per request
+  small_max_tokens: 3000  # optional override for the small model
 
 memory:
   db_path: .memory/memory.db
-  summarize_at_tokens: 4000
-  keep_last_messages: 20
+  summarize_at_tokens: 8000
+  keep_last_messages: 30
 
 agent:
-  artifact_dir: artifacts
+  artifact_dir: .
   # Safety limits to prevent runaway loops
   model_call_run_limit: 10        # max LLM calls per invocation (null disables)
   tool_call_run_limit: 40         # max tool calls per invocation (null disables)
   model_call_exit_behavior: end   # end | error
   tool_call_exit_behavior: continue  # continue | end | error
+  # Build agent overrides (long-running plan-and-execute deep agent)
+  build:
+    model_call_run_limit: 60
+    tool_call_run_limit: 200
+    recursion_limit: 500          # LangGraph superstep cap for one build run
 
 web_search:
   provider: tavily
   timeout_s: 10                          # used by DuckDuckGo fallback only
+
+mcp:
+  github:
+    # http = GitHub's hosted MCP server (nothing to install);
+    # stdio = same server run locally via Docker (ghcr.io/github/github-mcp-server).
+    # Both need GITHUB_PERSONAL_ACCESS_TOKEN in .env.
+    transport: http
+    url: https://api.githubcopilot.com/mcp/
+    # Keep the agent's tool surface small: only what pushing artifacts needs.
+    allowed_tools:
+      - get_me
+      - search_repositories
+      - create_repository
+      - list_branches
+      - create_branch
+      - get_file_contents
+      - create_or_update_file
+      - push_files
+      - create_pull_request

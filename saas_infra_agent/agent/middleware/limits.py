@@ -5,7 +5,7 @@ from langchain.agents.middleware import ModelCallLimitMiddleware, ToolCallLimitM
 from saas_infra_agent.config.config import config
 
 
-def get_limit_middleware():
+def get_limit_middleware(agent_cfg: dict | None = None):
     """Return middleware that limits model and tool calls.
 
     Config keys (under `agent:` in `config.yaml`):
@@ -15,8 +15,12 @@ def get_limit_middleware():
     - tool_call_run_limit: int | null
     - tool_call_thread_limit: int | null
     - tool_call_exit_behavior: "continue" | "end" | "error"
+
+    Pass `agent_cfg` to override the global `agent:` section (e.g. the build
+    agent merges `agent.build:` on top for higher long-run limits).
     """
-    agent_cfg = (config.get("agent") or {}) if isinstance(config, dict) else {}
+    if agent_cfg is None:
+        agent_cfg = (config.get("agent") or {}) if isinstance(config, dict) else {}
 
     model_run_limit = agent_cfg.get("model_call_run_limit")
     model_thread_limit = agent_cfg.get("model_call_thread_limit")
