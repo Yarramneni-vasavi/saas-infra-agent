@@ -75,30 +75,36 @@ Session commands: `/new`, `/switch <id>`, `/session`, `/exit`.
    skills, and writes IaC into the `artifacts/` directory.
 3. Apply the output: `terraform init/plan/apply`, `docker compose up`.
 
-## Standalone build agent (isolated testing)
-
-Runs the build step without the orchestrator, memory, or skills — handy for
-quick iteration against a fixed plan:
-
-```bash
-export OPENAI_API_KEY=sk-...
-python3 build_agent_standalone.py --arch-md sample_arch.md --output-dir ./infra_out
-```
-
 ## Project layout
 
 ```
-saas_infra_agent/
-├── main.py                  # CLI entry point (poetry run saas-cli)
-├── config.yaml              # LLM models, memory, limits, artifact dir
-├── agent/
-│   ├── orchestrator.py      # Router: design | build | monitor
-│   ├── design_agent.py      # Interrupt-driven requirements workflow
-│   ├── build_agent.py       # Plan → IaC deep agent (todos, skills, sandboxed fs)
-│   ├── agents.py            # AgentKind + monitor agent + get_agent()
-│   └── tools/               # read/write/search tools
-├── skills/                  # Skills library (SKILL.md per skill)
-│   ├── workloads/           # rag, microservices, monolith, ...
-│   └── aws-agent-skills/    # per-AWS-service guidance
-└── memory/                  # SQLite checkpointer + session handling
+saas-infra-agent/
+├── architecture.md            # Output of the DESIGN agent
+├── artifacts/                 # Output of the BUILD agent (e.g. infra/ Terraform)
+├── .memory/                   # SQLite memory.db, session + orchestrator state
+└── saas_infra_agent/
+    ├── main.py                # CLI entry point (poetry run saas-cli)
+    ├── config.yaml            # LLM models, memory, limits, MCP, vector store
+    ├── config/                # config.yaml loader
+    ├── llm/                   # LLM factory (models per agent from config.yaml)
+    ├── agent/
+    │   ├── orchestrator.py    # Router: design | build | monitor
+    │   ├── safetygate.py      # Per-turn safety gate (regex pre-filter + LLM)
+    │   ├── design_agent.py    # Interrupt-driven requirements workflow
+    │   ├── design_flow.py     # LangGraph state machine for the design flow
+    │   ├── build_agent.py     # Plan → IaC deep agent (todos, skills, sandboxed fs)
+    │   ├── agents.py          # AgentKind + monitor agent + get_agent()
+    │   ├── skills_catalog.py  # Skill discovery/catalog for progressive disclosure
+    │   ├── skills_loader.py   # Loads SKILL.md content on demand
+    │   ├── middleware/        # Model/tool call limits
+    │   └── tools/             # read/write/search/plan-approval tools
+    ├── skills/                # Skills library (SKILL.md per skill)
+    │   ├── workloads/         # rag, microservices, monolith, serverless-api, ...
+    │   ├── aws-agent-skills/  # per-AWS-service guidance (iam, ecs, lambda, ...)
+    │   ├── terraform-module-library/
+    │   └── cost-optimization/
+    ├── memory/                # SQLite checkpointer, sessions, task store (build DAG)
+    ├── context/               # Codebase indexing + retrieval (Qdrant hybrid / graph)
+    ├── mcp/                   # MCP server registry + sync tool loading
+    └── observability/         # Logging setup
 ```
