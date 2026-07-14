@@ -285,7 +285,9 @@ def _judge_quality(*, metric_input: str, context: str, output: str) -> dict[str,
     system = (
         "You are an evaluation judge. Score the assistant output on these metrics from 0.0 to 1.0:\n"
         "- answer_relevancy: does OUTPUT address the user's INPUT (or the current workflow step) in a useful way?\n"
-        "- faithfulness: does OUTPUT avoid introducing new specific facts not supported by CONTEXT?\n"
+        "- faithfulness: does OUTPUT avoid fabricating user-stated facts, requirements, or constraints "
+        "not supported by CONTEXT? New proposals, drafts, or questions consistent with CONTEXT are the "
+        "agent's job and are fine — penalize only invented user requirements or contradictions.\n"
         "- factual_correctness: is OUTPUT consistent with CONTEXT and free of clear contradictions?\n\n"
         "Return ONLY compact JSON, no prose, no markdown fences:\n"
         "{\n"
@@ -346,8 +348,11 @@ def _deterministic_checks(
                 if field != "expected_domain_flag" and case.get("expected_domain_flag") == "out_of_domain":
                     continue
                 got = actual.get(actual_key)
+                # A case may declare fallback labels that also count as correct
+                # (e.g. "none" expected but "needs_review" acceptable).
+                accepted = {expected, *(case.get(f"accepted_{actual_key}s") or [])}
                 checks.append(
-                    {"name": actual_key, "expected": expected, "actual": got, "pass": str(got) == expected}
+                    {"name": actual_key, "expected": expected, "actual": got, "pass": str(got) in accepted}
                 )
         return checks
 
@@ -380,9 +385,25 @@ def _deterministic_checks(
 def _judge_io(agent_name: AgentName, case: dict[str, Any], actual: dict[str, Any]) -> tuple[str, str, str]:
     """(metric_input, context, output) fed to the LLM judge for one case."""
     if agent_name == "orchestrator":
-        metric_input = str(case.get("prompt", ""))
+        metric_input = (
+            "[The agent under test is a routing orchestrator. It does not answer the "
+            "request itself: it classifies domain, intent, and safety, then either "
+            "dispatches to the design/build/monitor/general agent, asks for review, "
+            "or blocks/deflects. Judge the routing decision, not a full answer.]\n\n"
+            f"User request: {case.get('prompt', '')}"
+        )
         context = json.dumps(case.get("state_setup") or {}, ensure_ascii=True, indent=2)
-        output = str(actual.get("reply_preview", ""))
+        output = json.dumps(
+            {
+                "domain_flag": actual.get("domain_flag"),
+                "intent": actual.get("intent"),
+                "safety_flag": actual.get("safety_flag"),
+                "reasoning": actual.get("reasoning"),
+                "reply_to_user": actual.get("reply_preview"),
+            },
+            ensure_ascii=True,
+            indent=2,
+        )
         return metric_input, context, output
 
     if agent_name == "build_agent":
@@ -406,8 +427,21 @@ def _judge_io(agent_name: AgentName, case: dict[str, Any], actual: dict[str, Any
         return metric_input, context, "\n\n".join(output_parts)
 
     # design_agent
-    metric_input = str(case.get("input", ""))
-    context = str(actual.get("project_context") or "")
+    metric_input = (
+        "[The agent under test is an interrupt-driven design workflow. Depending on "
+        "the stage, the correct output may be clarification questions, a requirements "
+        "draft, an architecture proposal, or a saved PDR — not a direct answer. Judge "
+        "whether the output is a useful next workflow step for this input.]\n\n"
+        f"User message: {case.get('input', '')}"
+    )
+    context = json.dumps(
+        {
+            "preloaded_state": case.get("state_setup") or {},
+            "project_context": actual.get("project_context") or "",
+        },
+        ensure_ascii=True,
+        indent=2,
+    )
     output = str(actual.get("assistant_output") or "")
     if actual.get("pdr_exists"):
         output = output + "\n\nPDR_EXCERPT:\n" + str(actual.get("pdr_excerpt") or "")

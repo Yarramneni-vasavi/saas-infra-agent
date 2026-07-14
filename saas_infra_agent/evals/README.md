@@ -23,13 +23,46 @@ It also includes a lightweight metrics runner:
 - `run_deepeval.py`: runs the golden datasets against local code and scores
   them with DeepEval `GEval`.
 - `run_metrics.py`: runs the datasets and reports metrics **per question and
-  overall**. Per case it scores `answer_relevancy`, `faithfulness`,
-  `factual_correctness` (LLM-judged, threshold 0.70 each) plus a
-  `deterministic` check score built from the case's `expected_*` fields
-  (routing flags for the orchestrator; interrupt kind, expected/forbidden
-  files, and task-plan persistence for the build agent). The overall section
-  aggregates avg score and pass % per metric, the % of cases passing every
-  metric, and precision/recall for orchestrator intent/domain/safety.
+  overall** for all three agents.
+
+### Metrics (run_metrics.py)
+
+Per case, four metrics:
+
+- `answer_relevancy`, `faithfulness`, `factual_correctness`: LLM-judged
+  (threshold 0.70 each, with a one-sentence rationale in the JSON report).
+  The judge prompt is calibrated per agent: for the orchestrator it judges
+  the routing decision (flags + reasoning), not a full answer; for the design
+  agent it knows clarification questions / drafts / a saved PDR are the
+  correct output for a workflow step; faithfulness penalizes fabricated user
+  requirements or contradictions, not the new proposals the agent is supposed
+  to produce.
+- `deterministic`: rule-based checks built from the case's `expected_*`
+  fields, no LLM involved —
+  - orchestrator: `expected_domain_flag` / `expected_intent` /
+    `expected_safety_flag` match (a case may list fallback labels that also
+    count, e.g. `accepted_safety_flags`);
+  - design agent: files the workflow must write (`files`, e.g. `pdr.md`);
+  - build agent: ending interrupt kind, expected/forbidden artifact files,
+    and task-plan persistence.
+
+A case passes overall only when every metric passes. The overall section
+aggregates avg score and pass % per metric, the % of cases passing every
+metric, and precision/recall per label for orchestrator
+intent/domain/safety. Example output:
+
+```
+=== design_agent (9 cases) ===
+case         category      answer_relevancy  deterministic  factual_correctn  faithfulness  result
+design-001   clarify              1.00 PASS              -         1.00 PASS     1.00 PASS    PASS
+design-008   approval             1.00 PASS       1/1 PASS         0.95 PASS     0.95 PASS    PASS
+...
+Overall:
+  answer_relevancy       avg score 0.98, pass 100.0%, threshold 0.7
+  deterministic          avg score 1.00, pass 100.0%
+  ...
+  cases passing all metrics: 8/9 (88.9%)
+```
 
 ## Run
 
@@ -65,12 +98,15 @@ poetry run saas-evals --list
 ```
 
 Run metrics report (prints a per-case table plus overall aggregates; `--out`
-writes the full JSON report, `--json` also prints it):
+writes the full JSON report, `--json` also prints it, `--no-llm` skips the
+judge and keeps only deterministic checks). Always run it through the poetry
+venv — system `python3` is missing project dependencies:
 
 ```bash
-python -m saas_infra_agent.evals.run_metrics --agent all --out .tmp_evals/metrics_report.json
-python -m saas_infra_agent.evals.run_metrics --agent build_agent
-python -m saas_infra_agent.evals.run_metrics --agent build_agent --case-id build-001 --no-llm
+poetry run python -m saas_infra_agent.evals.run_metrics --agent all --out .tmp_evals/metrics_report.json
+poetry run python -m saas_infra_agent.evals.run_metrics --agent orchestrator
+poetry run python -m saas_infra_agent.evals.run_metrics --agent design_agent
+poetry run python -m saas_infra_agent.evals.run_metrics --agent build_agent --case-id build-001 --no-llm
 ```
 
 Note: build_agent cases run the real deep agent end to end (several LLM
@@ -93,10 +129,26 @@ The design agent is interrupt-driven, so its dataset supports two modes:
 
 Useful fields:
 
-- `state_setup`: minimal state to preload before running the eval.
+- `state_setup`: minimal state to preload before running the eval (also fed
+  to the LLM judge as context, so drafts are graded against it).
 - `resume_kind`: the interrupt kind being resumed (`clarify`,
   `requirements_confirm`, `architecture_feedback`, or `approve`).
 - `input`: the initial user message or resume reply.
+- `files`: files the workflow must write (checked deterministically,
+  e.g. `pdr.md` on approval).
+- `expectations`: checklist items for the grader.
+
+## Orchestrator Schema
+
+Single-turn routing cases. Useful fields:
+
+- `prompt`: the user message to route.
+- `expected_domain_flag` / `expected_intent` / `expected_safety_flag`:
+  checked deterministically per case and aggregated into precision/recall.
+- `accepted_safety_flags` (and analogously `accepted_intents`,
+  `accepted_domain_flags`): optional fallback labels that also count as a
+  pass for the per-case check, for cases where more than one flag is
+  acceptable (e.g. credential rotation may be `none` or `needs_review`).
 - `expectations`: checklist items for the grader.
 
 ## Build Agent Schema
