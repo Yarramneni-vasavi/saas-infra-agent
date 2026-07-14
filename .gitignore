@@ -16,6 +16,10 @@ config.local.yaml
 # Generated output (infra artifacts)
 output/
 
+# Eval run outputs (workspaces + reports)
+evals/results/
+.tmp_evals/
+
 # arch.md — generated at runtime, not source code
 arch.md
 

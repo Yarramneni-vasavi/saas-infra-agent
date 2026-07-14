@@ -1,12 +1,15 @@
 # Agent Evals
 
-This folder contains golden datasets for the router and design workflow.
+This folder contains golden datasets for the router, design workflow, and
+build workflow.
 
 There is no repo-wide eval runner yet, so the datasets are intentionally
 plain JSON and easy to adapt to LangSmith, OpenAI Evals, or a custom harness.
 
 This folder also includes a local DeepEval runner:
 `saas_infra_agent/evals/run_deepeval.py`.
+It also includes a lightweight metrics runner:
+`saas_infra_agent/evals/run_metrics.py`.
 
 ## Files
 
@@ -14,8 +17,52 @@ This folder also includes a local DeepEval runner:
   checks for `saas_infra_agent/agent/orchestrator.py`.
 - `design_agent/evals.json`: design-workflow checks for
   `saas_infra_agent/agent/design_flow.py`.
+- `build_agent/evals.json`: build-workflow checks for
+  `saas_infra_agent/agent/build_agent.py` (plan approval gate, artifact
+  generation, plan revision, resuming a stored DAG plan, secrets hygiene).
 - `run_deepeval.py`: runs the golden datasets against local code and scores
   them with DeepEval `GEval`.
+- `run_metrics.py`: runs the datasets and reports metrics **per question and
+  overall** for all three agents.
+
+### Metrics (run_metrics.py)
+
+Per case, four metrics:
+
+- `answer_relevancy`, `faithfulness`, `factual_correctness`: LLM-judged
+  (threshold 0.70 each, with a one-sentence rationale in the JSON report).
+  The judge prompt is calibrated per agent: for the orchestrator it judges
+  the routing decision (flags + reasoning), not a full answer; for the design
+  agent it knows clarification questions / drafts / a saved PDR are the
+  correct output for a workflow step; faithfulness penalizes fabricated user
+  requirements or contradictions, not the new proposals the agent is supposed
+  to produce.
+- `deterministic`: rule-based checks built from the case's `expected_*`
+  fields, no LLM involved —
+  - orchestrator: `expected_domain_flag` / `expected_intent` /
+    `expected_safety_flag` match (a case may list fallback labels that also
+    count, e.g. `accepted_safety_flags`);
+  - design agent: files the workflow must write (`files`, e.g. `pdr.md`);
+  - build agent: ending interrupt kind, expected/forbidden artifact files,
+    and task-plan persistence.
+
+A case passes overall only when every metric passes. The overall section
+aggregates avg score and pass % per metric, the % of cases passing every
+metric, and precision/recall per label for orchestrator
+intent/domain/safety. Example output:
+
+```
+=== design_agent (9 cases) ===
+case         category      answer_relevancy  deterministic  factual_correctn  faithfulness  result
+design-001   clarify              1.00 PASS              -         1.00 PASS     1.00 PASS    PASS
+design-008   approval             1.00 PASS       1/1 PASS         0.95 PASS     0.95 PASS    PASS
+...
+Overall:
+  answer_relevancy       avg score 0.98, pass 100.0%, threshold 0.7
+  deterministic          avg score 1.00, pass 100.0%
+  ...
+  cases passing all metrics: 8/9 (88.9%)
+```
 
 ## Run
 
@@ -50,6 +97,22 @@ List available ids:
 poetry run saas-evals --list
 ```
 
+Run metrics report (prints a per-case table plus overall aggregates; `--out`
+writes the full JSON report, `--json` also prints it, `--no-llm` skips the
+judge and keeps only deterministic checks). Always run it through the poetry
+venv — system `python3` is missing project dependencies:
+
+```bash
+poetry run python -m saas_infra_agent.evals.run_metrics --agent all --out .tmp_evals/metrics_report.json
+poetry run python -m saas_infra_agent.evals.run_metrics --agent orchestrator
+poetry run python -m saas_infra_agent.evals.run_metrics --agent design_agent
+poetry run python -m saas_infra_agent.evals.run_metrics --agent build_agent --case-id build-001 --no-llm
+```
+
+Note: build_agent cases run the real deep agent end to end (several LLM
+calls per case; `approve`-mode cases execute the full build), so they are
+slower and costlier than orchestrator/design cases.
+
 ## Notes
 
 - `OPENAI_API_KEY` is required for the agent under test and for DeepEval's
@@ -66,8 +129,48 @@ The design agent is interrupt-driven, so its dataset supports two modes:
 
 Useful fields:
 
-- `state_setup`: minimal state to preload before running the eval.
+- `state_setup`: minimal state to preload before running the eval (also fed
+  to the LLM judge as context, so drafts are graded against it).
 - `resume_kind`: the interrupt kind being resumed (`clarify`,
   `requirements_confirm`, `architecture_feedback`, or `approve`).
 - `input`: the initial user message or resume reply.
+- `files`: files the workflow must write (checked deterministically,
+  e.g. `pdr.md` on approval).
+- `expectations`: checklist items for the grader.
+
+## Orchestrator Schema
+
+Single-turn routing cases. Useful fields:
+
+- `prompt`: the user message to route.
+- `expected_domain_flag` / `expected_intent` / `expected_safety_flag`:
+  checked deterministically per case and aggregated into precision/recall.
+- `accepted_safety_flags` (and analogously `accepted_intents`,
+  `accepted_domain_flags`): optional fallback labels that also count as a
+  pass for the per-case check, for cases where more than one flag is
+  acceptable (e.g. credential rotation may be `none` or `needs_review`).
+- `expectations`: checklist items for the grader.
+
+## Build Agent Schema
+
+The build agent pauses on a `request_plan_approval` interrupt before writing
+artifacts, so its dataset supports two modes:
+
+- `invoke`: send one user message and run until the agent finishes or pauses
+  on the plan-approval interrupt.
+- `approve`: same, then resume the interrupt with `approval_reply` (an
+  approval executes the build; a change request should trigger a revised plan
+  and a second interrupt).
+
+Useful fields:
+
+- `files_setup`: files (e.g. `pdr.md`) written into the isolated workspace
+  before the run.
+- `task_plan_setup`: a stored DAG task plan preloaded into the task store to
+  test resume-from-plan behavior.
+- `expected_interrupt`: interrupt type the run should end paused on
+  (`build_plan_approval`), or `null` when the run should finish.
+- `expected_files` / `forbidden_files`: artifacts that must / must not exist
+  in the workspace after the run.
+- `expects_task_plan`: whether a plan must be persisted via `write_tasks`.
 - `expectations`: checklist items for the grader.

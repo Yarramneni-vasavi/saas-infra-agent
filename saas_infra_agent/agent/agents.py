@@ -8,8 +8,6 @@ from saas_infra_agent.llm.factory import get_llm
 from saas_infra_agent.memory.short_term import get_checkpointer, get_summarization_middleware
 from saas_infra_agent.observability.logger import get_logger
 
-from .build_agent import create_build_agent
-from .design_agent import create_design_agent
 from .middleware.limits import get_limit_middleware
 from .tools.search_codebase import search_codebase
 from .tools.search_web import search_web
@@ -48,8 +46,12 @@ def create_monitor_agent():
 def get_agent(kind: AgentKind):
     logger.info(f"Creating agent kind={kind.value}")
     if kind == AgentKind.DESIGN:
+        from .design_agent import create_design_agent
+
         return create_design_agent()
     if kind == AgentKind.BUILD:
+        from .build_agent import create_build_agent
+
         return create_build_agent()
     if kind == AgentKind.MONITOR:
         return create_monitor_agent()
