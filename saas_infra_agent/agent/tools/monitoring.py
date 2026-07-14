@@ -22,7 +22,18 @@ logger = get_logger(__name__)
 
 
 def _architecture_path() -> Path:
-    return Path.cwd() / "architecture.md"
+       """Resolve the design doc the monitor agent should read.
+
+       The upstream DESIGN agent writes ``pdr.md``. Older setups used
+       ``architecture.md``. Prefer the new file, fall back to the old one,
+       and only report "missing" if neither exists.
+       """
+       cwd = Path.cwd()
+       for name in ("pdr.md", "architecture.md"):
+           candidate = cwd / name
+           if candidate.exists():
+               return candidate
+       return cwd / "pdr.md"
 
 
 def _json(data: object) -> str:
