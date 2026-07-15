@@ -1,19 +1,32 @@
 ---
 name: terraform-module-library
-description: Build reusable Terraform modules for AWS, Azure, GCP, and OCI infrastructure following infrastructure-as-code best practices. Use when creating infrastructure modules, standardizing cloud provisioning, or implementing reusable IaC components.
+description: Build reusable Terraform modules for AWS, Azure, GCP, and OCI infrastructure following infrastructure-as-code best practices, targeting real cloud accounts (dev/staging/production). Use when creating infrastructure modules, standardizing cloud provisioning, or implementing reusable IaC components for a real cloud target. Do NOT use this skill if the Terraform will be applied against a local AWS emulator (e.g. Floci, LocalStack) — use the terraform-floci-emulator skill instead, since registry modules and multi-AZ/production patterns from this skill are a common cause of provider-version and unsupported-feature errors against emulators.
 ---
 
 # Terraform Module Library
 
-Production-ready Terraform module patterns for AWS, Azure, GCP, and OCI infrastructure.
+Production-ready Terraform module patterns for AWS, Azure, GCP, and OCI infrastructure — for real cloud accounts.
 
 ## Purpose
 
 Create reusable, well-tested Terraform modules for common cloud infrastructure patterns across multiple cloud providers.
 
+## Before using this skill: confirm the target
+
+This skill assumes Terraform is being applied against a real cloud account.
+If the target is a local emulator (Floci, LocalStack, or similar — recognizable
+by endpoints like `localhost:4566`, dummy `test`/`test` credentials, or the
+user saying "local", "emulator", or naming the tool directly), stop and use
+the `terraform-floci-emulator` skill instead. Applying this skill's patterns
+(registry modules, NAT Gateways, IRSA, multi-AZ HA) against an emulator is a
+frequent source of provider-version conflicts and unsupported-feature errors,
+since emulators implement a subset of AWS and each registry module pins its
+own drifting provider constraint. If genuinely unsure which target applies,
+ask before proceeding rather than defaulting to production patterns.
+
 ## When to Use
 
-- Build reusable infrastructure components
+- Build reusable infrastructure components for a real cloud account
 - Standardize cloud resource provisioning
 - Implement infrastructure as code best practices
 - Create multi-cloud compatible modules
@@ -248,3 +261,4 @@ func TestVPCModule(t *testing.T) {
 ## Related Skills
 
 - `cost-optimization` - For cost-effective designs
+- `terraform-floci-emulator` - Use instead of this skill when the target is a local AWS emulator (Floci) rather than a real cloud account

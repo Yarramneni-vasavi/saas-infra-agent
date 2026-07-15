@@ -344,6 +344,8 @@ def _architecture_prepare(state: DesignFlowState) -> DesignFlowState:
         "Propose ONLY the infrastructure design — not application code.\n"
         "Produce a '## Proposed Architecture' section in Markdown.\n"
         "For every AWS service, state: instance type/size, justification, and monthly cost range.\n"
+        "To know about exact costs as on date, use web search\n"
+        "Any doubt on a certain component architecture, do the WEB SEARCH and GET the best answer\n"
         "Do NOT ask questions. Do NOT include decisions or trade-offs (those come next).\n"
         "Assume AWS unless the requirements state otherwise.\n"
     )

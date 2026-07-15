@@ -1,0 +1,234 @@
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = ">= 5.0"
+    }
+  }
+  required_version = ">= 1.0.0"
+}
+
+provider "aws" {
+  region                      = "us-east-1"
+  access_key                  = "test"
+  secret_key                  = "test"
+  s3_use_path_style           = true
+  skip_credentials_validation = true
+  skip_metadata_api_check     = true
+  skip_requesting_account_id  = true
+
+  endpoints {
+    ec2      = "http://localhost:4566"
+    ecs      = "http://localhost:4566"
+    rds      = "http://localhost:4566"
+    s3       = "http://localhost:4566"
+    iam      = "http://localhost:4566"
+    sts      = "http://localhost:4566"
+    dynamodb = "http://localhost:4566"
+  }
+}
+
+# -------------------------
+# Networking
+# -------------------------
+
+resource "aws_vpc" "main" {
+  cidr_block = "10.0.0.0/16"
+  tags = { Name = "main-vpc" }
+}
+
+resource "aws_subnet" "public_a" {
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = "10.0.1.0/24"
+  availability_zone = "us-east-1a"
+  tags = { Name = "public-a" }
+}
+
+resource "aws_subnet" "public_b" {
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = "10.0.2.0/24"
+  availability_zone = "us-east-1b"
+  tags = { Name = "public-b" }
+}
+
+resource "aws_subnet" "private_app_a" {
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = "10.0.11.0/24"
+  availability_zone = "us-east-1a"
+  tags = { Name = "private-app-a" }
+}
+
+resource "aws_subnet" "private_app_b" {
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = "10.0.12.0/24"
+  availability_zone = "us-east-1b"
+  tags = { Name = "private-app-b" }
+}
+
+resource "aws_subnet" "private_data_a" {
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = "10.0.21.0/24"
+  availability_zone = "us-east-1a"
+  tags = { Name = "private-data-a" }
+}
+
+resource "aws_subnet" "private_data_b" {
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = "10.0.22.0/24"
+  availability_zone = "us-east-1b"
+  tags = { Name = "private-data-b" }
+}
+
+# -------------------------
+# Security Groups
+# -------------------------
+
+resource "aws_security_group" "rds_sg" {
+  name        = "rds-sg"
+  description = "RDS security group"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    from_port   = 5432
+    to_port     = 5432
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.0.0/16"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_security_group" "app_sg" {
+  name        = "app-sg"
+  description = "Application container security group"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    from_port   = 8080
+    to_port     = 8080
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.0.0/16"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_db_subnet_group" "data" {
+  name       = "data-subnet-group"
+  subnet_ids = [aws_subnet.private_data_a.id, aws_subnet.private_data_b.id]
+}
+
+# -------------------------
+# RDS (native resource — Floci runs this as a real Postgres container)
+# -------------------------
+
+resource "aws_db_instance" "postgres" {
+  identifier              = "app-db"
+  engine                  = "postgres"
+  engine_version          = "13.7"
+  instance_class          = "db.t3.medium"
+  allocated_storage       = 100
+  username                = "appadmin"
+  password                = "changeme123!" # local-only; move to aws_secretsmanager_secret before this touches real AWS
+  db_subnet_group_name    = aws_db_subnet_group.data.name
+  vpc_security_group_ids  = [aws_security_group.rds_sg.id]
+  skip_final_snapshot     = true
+  publicly_accessible     = false
+}
+
+# -------------------------
+# S3 (native resources)
+# -------------------------
+
+resource "aws_s3_bucket" "app_bucket" {
+  bucket        = "my-coding-platform-bucket"
+  force_destroy = false
+}
+
+resource "aws_s3_bucket_versioning" "app_bucket" {
+  bucket = aws_s3_bucket.app_bucket.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "app_bucket" {
+  bucket = aws_s3_bucket.app_bucket.id
+
+  rule {
+    id     = "log"
+    status = "Enabled"
+
+    transition {
+      days          = 30
+      storage_class = "GLACIER"
+    }
+
+    expiration {
+      days = 90
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+  }
+}
+
+# -------------------------
+# ECS (native resources; DB wiring pulled from aws_db_instance attrs, not hardcoded)
+# -------------------------
+
+resource "aws_ecs_cluster" "main" {
+  name = "ecs-fargate-cluster"
+
+  setting {
+    name  = "containerInsights"
+    value = "enabled"
+  }
+}
+
+resource "aws_ecs_task_definition" "app" {
+  family                   = "my-app-task"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = "256"
+  memory                   = "512"
+
+  container_definitions = jsonencode([
+    {
+      name  = "my-app"
+      image = "000000000000.dkr.ecr.us-east-1.localhost:5100/my-app:v1"
+      environment = [
+        { name = "DB_HOST", value = aws_db_instance.postgres.address },
+        { name = "DB_PORT", value = tostring(aws_db_instance.postgres.port) },
+        { name = "DB_NAME", value = aws_db_instance.postgres.db_name },
+        { name = "DB_USER", value = aws_db_instance.postgres.username }
+      ]
+      portMappings = [{ containerPort = 8080, hostPort = 8080 }]
+    }
+  ])
+}
+
+resource "aws_ecs_service" "app" {
+  name            = "my-app-service"
+  cluster         = aws_ecs_cluster.main.id
+  task_definition = aws_ecs_task_definition.app.arn
+  desired_count   = 1
+  launch_type     = "FARGATE"
+
+  network_configuration {
+    subnets          = [aws_subnet.private_app_a.id, aws_subnet.private_app_b.id]
+    security_groups  = [aws_security_group.app_sg.id]
+    assign_public_ip = false
+  }
+}

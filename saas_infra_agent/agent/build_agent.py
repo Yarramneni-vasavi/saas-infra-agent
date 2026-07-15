@@ -31,7 +31,7 @@ from saas_infra_agent.observability.logger import get_logger
 
 from .middleware.limits import get_limit_middleware
 from .tools.request_plan_approval import request_plan_approval
-from .tools.search_codebase import search_codebase
+from .tools.search_web import search_web
 from .tools.task_plan import read_tasks, write_tasks
 from .tools.terraform_validate import terraform_validate
 from .tools.terminal_tools import run_command, run_in_directory
@@ -43,9 +43,10 @@ SKILLS_ROOT = Path(__file__).resolve().parents[1] / "skills"
 # SkillsMiddleware discovery is flat (<source>/<skill-name>/SKILL.md), so each
 # nested group in the library is its own source.
 SKILL_SOURCES = [
-    "/skills/",
+    "/skills/terraform-floci-emulator",
     "/skills/workloads/",
     "/skills/aws-agent-skills/skills/",
+    "/skills/cost-optimization"
 ]
 
 def _build_system_prompt_compact(pdr_paths_hint: str) -> str:
@@ -61,20 +62,21 @@ Plan + approval:
 - Before approval: do not write artifacts and do not run commands.
 
 In request_plan_approval, explicitly mention you will run local validation:
-`terraform init -backend=false` and `terraform validate`, and fix errors until
-validation succeeds.
+`terraform init -backend=false` and `terraform validate`.
 
 Workflow:
 1. Read {pdr_paths_hint}. If it doesn't exist, stop and ask for DESIGN first.
 2. Load only relevant skills before writing any files.
 3. Generate minimal runnable artifacts (Terraform under /infra unless told otherwise).
    - Pin versions for every Terraform Registry module you use (add `version =`).
+   - Use hashicorp/aws provider version >= 5.0. Do not use versions below 5.0.
+   - If in doubt on how to write script for a resource, use web search tool.
    - Keep module inputs consistent with the pinned major version (avoid deprecated/renamed args).
    - Keep provider/Terraform version constraints compatible with the modules you selected.
 4. Validate Terraform (no apply):
    - Call terraform_validate.
    - If it reports errors, fix the Terraform files and call terraform_validate again.
-   - Repeat until validate passes or you hit an external blocker.
+   - Repeat until validate passes or User says to STOP or SKIP.
 5. Reply with a short summary: files generated and how to run locally.
 
 GitHub publishing is handled by a separate PUBLISH step. Tell the user to run
@@ -127,7 +129,7 @@ def create_build_agent():
 
     agent = create_deep_agent(
         model=get_llm(),
-        tools=[run_command, run_in_directory, request_plan_approval, terraform_validate, write_tasks, read_tasks],
+        tools=[search_web, run_command, run_in_directory, request_plan_approval, terraform_validate, write_tasks, read_tasks],
         system_prompt=_build_system_prompt_compact(
             "/pdr.md"
             if artifact_dir_norm in {"", "."}

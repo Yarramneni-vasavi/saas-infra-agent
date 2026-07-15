@@ -146,10 +146,6 @@ def search_web(query: str, max_results: int = 5) -> str:
     Primary provider : Tavily  (reliable, AI-optimised, 1000 free searches/month)
     Fallback provider: DuckDuckGo HTML scrape (best-effort, no API key needed)
 
-    Provider is controlled by config:
-        web_search:
-            provider: tavily          # or duckduckgo
-            TAVILY_API_KEY: tvly-...
     """
     query = (query or "").strip()
     if not query:

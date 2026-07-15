@@ -47,7 +47,7 @@ def main() -> None:
 
     while True:
         try:
-            user_input = console.input("[bold cyan]> [/bold cyan]").strip()
+            user_input = console.input("\n[bold cyan]> [/bold cyan]").strip()
         except (EOFError, KeyboardInterrupt):
             console.print("\nExiting.")
             break

@@ -3,7 +3,7 @@ import os
 from langchain.tools import tool
 
 
-_BLOCKED_COMMANDS = {"rm -rf /", "mkfs", "dd if=", ":(){:|:&};:"}
+_BLOCKED_COMMANDS = {"rm -rf /", "terraform destroy", "mkfs", "dd if=", ":(){:|:&};:"}
 _TIMEOUT_SECONDS = 30
 
 

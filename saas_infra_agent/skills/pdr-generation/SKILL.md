@@ -28,12 +28,12 @@ Every `pdr.md` MUST contain the following sections in this order. Missing sectio
 
 ### 1. Document Header
 
-```markdown
+```
 # Preliminary Design Review — <Application Name>
 **Version:** 1.0  
 **Date:** YYYY-MM-DD  
 **Status:** Draft | Approved  
-**Author:** SaaS Infrastructure Agent — Design Module  
+**Author:** SaaS Infrastructure Agent  
 **Cloud Provider:** AWS  
 **Reviewed By:** <Human approver name or "Pending">
 ```
