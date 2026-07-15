@@ -10,9 +10,11 @@ from saas_infra_agent.observability.logger import get_logger
 
 from .build_agent import create_build_agent
 from .design_agent import create_design_agent
+from .publish_agent import create_publish_agent
 from .middleware.limits import get_limit_middleware
 from .tools.search_codebase import search_codebase
 from .tools.search_web import search_web
+from .tools.terminal_tools import run_command, run_in_directory
 
 logger = get_logger(__name__)
 
@@ -21,6 +23,7 @@ class AgentKind(str, Enum):
     DESIGN = "design"
     BUILD = "build"
     MONITOR = "monitor"
+    PUBLISH = "publish"
 
 
 MONITOR_SYSTEM_PROMPT = """You are the MONITOR agent for a SaaS infra assistant.
@@ -53,6 +56,8 @@ def get_agent(kind: AgentKind):
         return create_build_agent()
     if kind == AgentKind.MONITOR:
         return create_monitor_agent()
+    if kind == AgentKind.PUBLISH:
+        return create_publish_agent()
     raise ValueError(f"Unknown agent kind: {kind!r}")
 
 

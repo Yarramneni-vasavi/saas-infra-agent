@@ -1,59 +1,81 @@
+from __future__ import annotations
+
 from pathlib import Path
+
+from dotenv import load_dotenv
+from rich.console import Console
+from rich.markdown import Markdown
+from rich.panel import Panel
+
+# Load .env before anything else (keys, model config, etc.)
+load_dotenv(Path(__file__).parent.parent / ".env")
+
+from saas_infra_agent.observability.logger import configure_logging, get_log_file
+
+configure_logging()
 
 from saas_infra_agent.agent.orchestrator import handle_query, pending_approval_prompt
 from saas_infra_agent.memory.session import get_current_session, new_session, switch_session
-from dotenv import load_dotenv
 
-# Load .env before anything else
-load_dotenv(Path(__file__).parent.parent / ".env")
+console = Console()
 
 
 def _show_pending_approval(session_id: str) -> None:
-    """Re-display a pending approval left over from a previous run.
-
-    Without this, the next message the user types is silently consumed as the
-    reply to an interrupt prompt they may never have seen.
-    """
+    """Re-display a pending approval left over from a previous run."""
     prompt = pending_approval_prompt(session_id)
-    if prompt:
-        print("\nThis session is paused waiting for your approval — your next message is the reply:\n")
-        print(prompt)
+    if not prompt:
+        return
+    console.print(
+        Panel.fit(
+            prompt,
+            title="Approval Required",
+            subtitle="Your next message is the reply",
+            border_style="yellow",
+        )
+    )
 
 
 def main() -> None:
-    print("saas-cli started. Type /exit to quit.")
+    console.print("[bold cyan]saas-cli[/bold cyan] started. Type [bold]/exit[/bold] to quit.")
     session_id = get_current_session()
-    print(f"Session: {session_id}")
+    console.print(f"[dim]Session:[/dim] [bold]{session_id}[/bold]")
+    log_file = get_log_file()
+    if log_file is not None:
+        console.print(f"[dim]Logs:[/dim] {log_file}")
+
     _show_pending_approval(session_id)
+
     while True:
         try:
-            user_input = input("> ").strip()
+            user_input = console.input("[bold cyan]> [/bold cyan]").strip()
         except (EOFError, KeyboardInterrupt):
-            print("\nExiting.")
+            console.print("\nExiting.")
             break
 
         if user_input == "/exit":
-            print("Exiting.")
+            console.print("Exiting.")
             break
 
         if user_input == "/session":
-            print(f"Session: {session_id}")
+            console.print(f"Session: {session_id}")
             continue
 
         if user_input == "/new":
             session_id = new_session()
-            print(f"Session: {session_id}")
+            console.print(f"Session: {session_id}")
+            _show_pending_approval(session_id)
             continue
 
         if user_input.startswith("/switch "):
             session_id = switch_session(user_input[len("/switch ") :].strip())
-            print(f"Session: {session_id}")
+            console.print(f"Session: {session_id}")
             _show_pending_approval(session_id)
             continue
 
         if user_input:
             reply = handle_query(user_input, thread_id=session_id)
-            print(reply)
+            if reply:
+                console.print(Markdown(reply))
 
 
 if __name__ == "__main__":

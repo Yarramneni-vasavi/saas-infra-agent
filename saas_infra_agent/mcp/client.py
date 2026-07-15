@@ -17,7 +17,6 @@ from functools import lru_cache
 from typing import Awaitable, TypeVar
 
 from langchain_core.tools import BaseTool, StructuredTool, ToolException
-from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from saas_infra_agent.observability.logger import get_logger
 
@@ -76,6 +75,16 @@ def get_mcp_tools(*server_names: str) -> tuple[BaseTool, ...]:
     """
     connections = get_connections(server_names)
     if not connections:
+        return ()
+
+    try:
+        from langchain_mcp_adapters.client import MultiServerMCPClient
+    except ModuleNotFoundError:
+        logger.warning(
+            "MCP tools disabled: missing dependency `langchain-mcp-adapters` "
+            "(import `langchain_mcp_adapters`). If you installed via pipx, upgrade/reinstall "
+            "`saas-cli` or run it from this repo with `poetry run saas-cli`."
+        )
         return ()
 
     client = MultiServerMCPClient(connections)
