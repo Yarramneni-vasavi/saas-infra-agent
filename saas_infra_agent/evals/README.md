@@ -20,6 +20,11 @@ It also includes a lightweight metrics runner:
 - `build_agent/evals.json`: build-workflow checks for
   `saas_infra_agent/agent/build_agent.py` (plan approval gate, artifact
   generation, plan revision, resuming a stored DAG plan, secrets hygiene).
+- `monitor_agent/evals.json`: monitor-workflow checks for
+  `saas_infra_agent/agent/tools/monitoring.py` (architecture-first read of
+  pdr.md, dynamic service extraction, missing-design boundary, health
+  classification, PromQL recommendations, live Prometheus query and
+  fallback paths, SLO cross-check against the design).
 - `run_deepeval.py`: runs the golden datasets against local code and scores
   them with DeepEval `GEval`.
 - `run_metrics.py`: runs the datasets and reports metrics **per question and

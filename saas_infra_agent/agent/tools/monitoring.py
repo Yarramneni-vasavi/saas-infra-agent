@@ -11,6 +11,7 @@ from saas_infra_agent.monitoring.prometheus import (
     summarize_vector_result,
 )
 from saas_infra_agent.monitoring.simulation import (
+    extract_services_from_design,
     get_sample_metrics,
     recommended_promql_queries,
     service_health,
@@ -63,35 +64,55 @@ def read_architecture_for_monitoring() -> str:
 @tool
 def get_simulated_service_metrics() -> str:
     """
-    Return simulated metrics for five representative SaaS services.
+    Return simulated metrics for the AWS services defined in the active design.
 
-    Use this when real Prometheus data is unavailable, when the user asks for a
-    demo, or when validating monitor-agent behavior locally.
+    Reads pdr.md (or architecture.md fallback) and generates deterministic
+    metrics for each service. Use when real Prometheus data is unavailable,
+    when the user asks for a demo, or for local validation.
     """
     logger.info("Tool called: get_simulated_service_metrics")
-    return _json(
-        {
+    design = read_architecture_for_monitoring.invoke({})
+    if "is missing" in design:
+        return _json({
             "source": "simulated",
-            "services": get_sample_metrics(),
-        }
-    )
+            "ok": False,
+            "error": "No approved design found. Run the DESIGN agent and approve before requesting metrics.",
+        })
+    services = extract_services_from_design(design)
+    if not services:
+        return _json({
+            "source": "simulated",
+            "ok": False,
+            "error": "Could not find any services in the active design.",
+            "design_excerpt": design[:500],
+        })
+    return _json({"source": "simulated", "ok": True, "services": get_sample_metrics(services)})
 
 
 @tool
 def get_simulated_service_health() -> str:
     """
-    Return health classifications from simulated service metrics.
+    Return health classifications for the AWS services defined in the active design.
 
-    Use this for local smoke tests and for explaining how the monitor agent
-    interprets CPU, memory, error rate, latency, token usage, and cost signals.
+    Reads pdr.md (or architecture.md fallback), generates deterministic metrics
+    per service, and classifies them as healthy / warning / critical.
     """
     logger.info("Tool called: get_simulated_service_health")
-    return _json(
-        {
+    design = read_architecture_for_monitoring.invoke({})
+    if "is missing" in design:
+        return _json({
             "source": "simulated",
-            "health": service_health(),
-        }
-    )
+            "ok": False,
+            "error": "No approved design found. Run the DESIGN agent and approve before requesting health.",
+        })
+    services = extract_services_from_design(design)
+    if not services:
+        return _json({
+            "source": "simulated",
+            "ok": False,
+            "error": "Could not find any services in the active design.",
+        })
+    return _json({"source": "simulated", "ok": True, "health": service_health(services)})
 
 
 @tool
