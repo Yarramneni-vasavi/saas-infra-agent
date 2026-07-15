@@ -73,7 +73,8 @@ def main() -> None:
             continue
 
         if user_input:
-            reply = handle_query(user_input, thread_id=session_id)
+            with console.status("[dim]Working...[/dim]", spinner="dots"):
+                reply = handle_query(user_input, thread_id=session_id)
             if reply:
                 console.print(Markdown(reply))
 

@@ -22,6 +22,8 @@ from saas_infra_agent.observability.logger import get_logger
 logger = get_logger(__name__)
 
 _APPROVED_THIS_PROCESS = False
+_CONSECUTIVE_FAILURES = 0
+_MAX_CONSECUTIVE_FAILURES = 3
 
 _YES = {"approve", "approved", "yes", "y", "ok", "okay", "run", "continue", "proceed"}
 
@@ -87,6 +89,54 @@ def _run(cmd: list[str], cwd: Path) -> dict:
     except subprocess.TimeoutExpired:
         return {"ok": False, "code": -2, "stdout": "", "stderr": f"Command timed out: {' '.join(cmd)}"}
 
+def _deploy_emulator_enabled() -> bool:
+    deploy_cfg = dict(config.get("deploy") or {})
+    return bool(deploy_cfg.get("emulator"))
+
+
+def _floci_endpoint() -> str:
+    deploy_cfg = dict(config.get("deploy") or {})
+    floci_cfg = dict(deploy_cfg.get("floci") or {})
+    return str(floci_cfg.get("endpoint") or "").strip()
+
+
+def _floci_provider_preflight(tf_dir: Path) -> str | None:
+    """Best-effort check that the generated Terraform includes Floci-friendly AWS provider config."""
+    if not _deploy_emulator_enabled():
+        return None
+
+    tf_files = sorted(tf_dir.glob("*.tf"))
+    if not tf_files:
+        return None
+
+    text = "\n".join(p.read_text(encoding="utf-8", errors="ignore") for p in tf_files)
+    endpoint = _floci_endpoint()
+
+    # Minimal requirements for local emulators like Floci/LocalStack: custom endpoints
+    # plus dummy creds and/or skip validations.
+    has_provider = 'provider "aws"' in text
+    has_endpoints = "endpoints" in text and "s3" in text
+    has_endpoint_value = (endpoint in text) if endpoint else ("localhost:4566" in text)
+    has_skip = "skip_credentials_validation" in text or "skip_requesting_account_id" in text
+    has_dummy_creds = "access_key" in text and "secret_key" in text
+
+    if not has_provider:
+        return (
+            "Floci emulator mode is enabled (config.deploy.emulator=true), but no `provider \"aws\" { ... }` "
+            "block was found. Add the AWS provider configuration per `/skills/terraform-floci-emulator/SKILL.md`."
+        )
+    if not (has_endpoints and has_endpoint_value):
+        return (
+            "Floci emulator mode is enabled, but the AWS provider `endpoints { ... }` configuration "
+            "does not appear to be set for the Floci endpoint. Follow `/skills/terraform-floci-emulator/SKILL.md`."
+        )
+    if not (has_skip or has_dummy_creds):
+        return (
+            "Floci emulator mode is enabled, but the AWS provider config does not appear to include "
+            "dummy credentials and/or skip-* validation flags. Follow `/skills/terraform-floci-emulator/SKILL.md`."
+        )
+    return None
+
 
 @tool
 def terraform_validate(path: str = "infra") -> str:
@@ -97,6 +147,7 @@ def terraform_validate(path: str = "infra") -> str:
     - Subsequent calls reuse that approval (so the agent can iterate fixes).
     """
     global _APPROVED_THIS_PROCESS
+    global _CONSECUTIVE_FAILURES
 
     tf_dir = _pick_tf_dir(path)
     init_cmd = ["terraform", "init", "-backend=false", "-input=false", "-no-color"]
@@ -130,18 +181,95 @@ def terraform_validate(path: str = "infra") -> str:
             )
         _APPROVED_THIS_PROCESS = True
 
+    preflight_err = _floci_provider_preflight(tf_dir)
+    if preflight_err:
+        _CONSECUTIVE_FAILURES += 1
+        if _CONSECUTIVE_FAILURES >= _MAX_CONSECUTIVE_FAILURES:
+            reply = interrupt(
+                {
+                    "type": "exec_continue",
+                    "prompt": (
+                        f"Terraform validation has failed {_CONSECUTIVE_FAILURES} times in a row.\n\n"
+                        f"Latest issue:\n{preflight_err}\n\n"
+                        "Reply 'continue' to keep iterating fixes, or anything else to stop for now."
+                    ),
+                }
+            )
+            if not _is_approved(str(reply)):
+                return json.dumps(
+                    {
+                        "approved": True,
+                        "ok": False,
+                        "halt": True,
+                        "error": "Stopped after repeated validation failures.",
+                        "tf_dir": str(tf_dir),
+                        "consecutive_failures": _CONSECUTIVE_FAILURES,
+                    },
+                    ensure_ascii=True,
+                    indent=2,
+                )
+            _CONSECUTIVE_FAILURES = 0
+
+        return json.dumps(
+            {
+                "approved": True,
+                "ok": False,
+                "error": preflight_err,
+                "tf_dir": str(tf_dir),
+                "consecutive_failures": _CONSECUTIVE_FAILURES,
+            },
+            ensure_ascii=True,
+            indent=2,
+        )
+
     logger.info("terraform_validate: running terraform init/validate")
     init_res = _run(init_cmd, tf_dir)
     validate_res = _run(validate_cmd, tf_dir) if init_res["ok"] else {"ok": False, "code": None, "stdout": "", "stderr": ""}
+    ok = bool(init_res["ok"] and validate_res["ok"])
+    if ok:
+        _CONSECUTIVE_FAILURES = 0
+    else:
+        _CONSECUTIVE_FAILURES += 1
+        if _CONSECUTIVE_FAILURES >= _MAX_CONSECUTIVE_FAILURES:
+            # Pause the agent after repeated failures to avoid infinite loops.
+            reply = interrupt(
+                {
+                    "type": "exec_continue",
+                    "prompt": (
+                        f"Terraform validation has failed {_CONSECUTIVE_FAILURES} times in a row.\n\n"
+                        f"- Working dir: {tf_dir}\n"
+                        f"- Last init ok: {init_res['ok']} (code {init_res['code']})\n"
+                        f"- Last validate ok: {validate_res['ok']} (code {validate_res.get('code')})\n\n"
+                        "Reply 'continue' to keep iterating fixes, or anything else to stop for now."
+                    ),
+                }
+            )
+            if not _is_approved(str(reply)):
+                return json.dumps(
+                    {
+                        "approved": True,
+                        "tf_dir": str(tf_dir),
+                        "init": init_res,
+                        "validate": validate_res,
+                        "ok": False,
+                        "halt": True,
+                        "error": "Stopped after repeated validation failures.",
+                        "consecutive_failures": _CONSECUTIVE_FAILURES,
+                    },
+                    ensure_ascii=True,
+                    indent=2,
+                )
+            _CONSECUTIVE_FAILURES = 0
+
     return json.dumps(
         {
             "approved": True,
             "tf_dir": str(tf_dir),
             "init": init_res,
             "validate": validate_res,
-            "ok": bool(init_res["ok"] and validate_res["ok"]),
+            "ok": ok,
+            "consecutive_failures": _CONSECUTIVE_FAILURES,
         },
         ensure_ascii=True,
         indent=2,
     )
-

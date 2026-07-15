@@ -1,19 +1,13 @@
 ---
 name: ec2
 description: >
-  AWS EC2 virtual machine management — instances, security groups, key pairs, AMIs, EBS volumes,
-  Auto Scaling Groups, Spot Instances, Session Manager, placement groups, and instance lifecycle automation.
-
+  AWS EC2 virtual machine management — instances, security groups, key pairs, AMIs, EBS volumes, Auto Scaling Groups, Spot Instances, Session Manager, placement groups, and instance lifecycle automation.
   Trigger on ANY of these, even when EC2 isn't named explicitly:
-  - Launching or provisioning: "spin up a server", "create a VM", "new instance", "run-instances", mention of instance types (t3, m5, c5, r6, g5, p4d, t4g, c7g, etc.)
-  - SSH / connectivity problems: "connection refused", "connection timed out", "permission denied publickey", "can't connect to my instance", "SSH not working"
+  - Launching or provisioning: "spin up a server", "create a VM", "new instance", "run-instances", mention of instance types(t3, m5, c5 etc.)
+  - SSH/connectivity problems: "connection refused", "connection timed out", "permission denied publickey", "can't connect to my instance", "SSH not working"
   - Instance management: resize, stop, start, terminate, reboot, change instance type
-  - Cost optimization: stop dev instances overnight, save money on EC2, spot vs on-demand, reserved instances
   - Auto Scaling: ASG, launch template, mixed instances policy, scale to zero, scheduled scaling
-  - Spot Instances: spot fleet, spot interruption, capacity-optimized, price-capacity-optimized
-  - AMIs and backups: create image, custom AMI, EBS snapshot, DLM lifecycle policy, copy AMI
   - Monitoring: EC2 CPU utilization, CloudWatch metrics for instance, instance status checks, console output
-  - Access methods: Session Manager, EC2 Instance Connect, bastion host, port forwarding
   - Security: IMDSv2, instance metadata, IAM role on instance, security group rules
   - User data and bootstrap scripts, cloud-init
 last_updated: "2026-05-12"

@@ -50,6 +50,23 @@ SKILL_SOURCES = [
 ]
 
 def _build_system_prompt_compact(pdr_paths_hint: str) -> str:
+    deploy_cfg = dict(config.get("deploy") or {})
+    emulator_enabled = bool(deploy_cfg.get("emulator"))
+    floci_cfg = dict(deploy_cfg.get("floci") or {})
+    floci_endpoint = str(floci_cfg.get("endpoint") or "").strip()
+
+    emulator_block = ""
+    if emulator_enabled:
+        endpoint_line = f"- Floci endpoint: {floci_endpoint}\n" if floci_endpoint else ""
+        emulator_block = (
+            "\nEnvironment (IMPORTANT):\n"
+            "- deploy.emulator is ENABLED. You are targeting the Floci AWS emulator, not real AWS.\n"
+            f"{endpoint_line}"
+            "- Before writing any Terraform, you MUST read and follow `/skills/terraform-floci-emulator/SKILL.md`.\n"
+            "- Your Terraform MUST include an `aws` provider configuration suitable for Floci (endpoints/dummy creds/skip validations) per that skill.\n"
+            "- Only generate resources/services supported by Floci. If unsupported, stub it or leave a TODO instead of producing invalid Terraform.\n"
+        )
+
     return f"""You are the BUILD agent for a SaaS infrastructure assistant.
 
 You turn an approved architecture plan into runnable Infrastructure as Code.
@@ -63,6 +80,7 @@ Plan + approval:
 
 In request_plan_approval, explicitly mention you will run local validation:
 `terraform init -backend=false` and `terraform validate`.
+{emulator_block}
 
 Workflow:
 1. Read {pdr_paths_hint}. If it doesn't exist, stop and ask for DESIGN first.
