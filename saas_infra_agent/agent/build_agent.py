@@ -33,6 +33,7 @@ from .middleware.limits import get_limit_middleware
 from .tools.request_plan_approval import request_plan_approval
 from .tools.search_web import search_web
 from .tools.task_plan import read_tasks, write_tasks
+from .tools.long_term_memory import list_long_term_projects, recall_long_term, remember_long_term
 from .tools.terraform_validate import terraform_validate
 from .tools.terminal_tools import run_command, run_in_directory
 
@@ -147,7 +148,18 @@ def create_build_agent():
 
     agent = create_deep_agent(
         model=get_llm(),
-        tools=[search_web, run_command, run_in_directory, request_plan_approval, terraform_validate, write_tasks, read_tasks],
+        tools=[
+            search_web,
+            run_command,
+            run_in_directory,
+            request_plan_approval,
+            terraform_validate,
+            remember_long_term,
+            recall_long_term,
+            list_long_term_projects,
+            write_tasks,
+            read_tasks,
+        ],
         system_prompt=_build_system_prompt_compact(
             "/pdr.md"
             if artifact_dir_norm in {"", "."}

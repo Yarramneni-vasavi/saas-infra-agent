@@ -12,6 +12,7 @@ from .build_agent import create_build_agent
 from .design_agent import create_design_agent
 from .publish_agent import create_publish_agent
 from .middleware.limits import get_limit_middleware
+from .tools.long_term_memory import list_long_term_projects, recall_long_term, remember_long_term
 from .tools.monitoring import (
     get_recommended_promql_queries,
     get_simulated_service_health,
@@ -70,6 +71,9 @@ def create_monitor_agent():
             get_recommended_promql_queries,
             query_prometheus,
             query_prometheus_range,
+            remember_long_term,
+            recall_long_term,
+            list_long_term_projects,
             search_codebase,
             search_web,
         ],

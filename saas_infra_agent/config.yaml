@@ -18,6 +18,10 @@ llm:
 
 memory:
   db_path: .memory/memory.db
+  long_term_db_path: .memory/long_term.db
+  long_term_auto_save: true
+  # Optional: override project name used for auto-saved memories.
+  # long_term_default_project: coding-platform
   summarize_at_tokens: 8000
   keep_last_messages: 30
 

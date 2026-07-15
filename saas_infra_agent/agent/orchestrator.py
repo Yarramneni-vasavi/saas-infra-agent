@@ -25,6 +25,7 @@ from saas_infra_agent.memory.short_term import get_checkpointer
 from saas_infra_agent.config.config import config
 from saas_infra_agent.agent.safetygate import check_safety, SafetyFlag
 from saas_infra_agent.agent.domaingate import check_domain
+from saas_infra_agent.memory.auto_save import auto_save_long_term
 from saas_infra_agent.observability.logger import get_logger
 from langgraph.types import Command
 
@@ -602,6 +603,10 @@ def handle_query(query: str, thread_id: str) -> str:
         _append_summary(state, query, reply)
         _clear_inflight_query(state)
         save_session_state(thread_id, state)
+        try:
+            auto_save_long_term(user_text=query, assistant_text=reply)
+        except Exception:
+            logger.exception("Long-term auto-save failed; continuing.")
         return reply
     except Exception as exc:
         state.last_failure = f"{type(exc).__name__}: {exc}"
