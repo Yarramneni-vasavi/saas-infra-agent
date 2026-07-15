@@ -11,7 +11,7 @@ qdrant:
 
 llm:
   provider: openai        # openai | anthropic
-  model: gpt-4o
+  model: gpt-5-mini
   small_model: gpt-5-mini
   max_tokens: 9000        # max output tokens per request
   small_max_tokens: 3000  # optional override for the small model
@@ -56,3 +56,6 @@ mcp:
       - create_or_update_file
       - push_files
       - create_pull_request
+monitoring:
+  prometheus_url: http://localhost:9090
+  timeout_s: 5
