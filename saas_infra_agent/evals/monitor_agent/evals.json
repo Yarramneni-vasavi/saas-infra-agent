@@ -1,0 +1,131 @@
+{
+  "agent_name": "monitor_agent",
+  "description": "Golden dataset for the MONITOR agent: architecture-first behavior, dynamic service extraction from pdr.md, missing-design boundary, simulated health classification, PromQL recommendations, live Prometheus query path with fallback, and SLO-aware synthesis.",
+  "evals": [
+    {
+      "id": "monitor-001",
+      "category": "architecture-first",
+      "mode": "invoke",
+      "input": "Is my api-service meeting the p95 SLO? What's the error rate?",
+      "files_setup": {
+        "pdr.md": "# Product Design Requirements (PDR)\n\n## Requirements\n- Serverless RAG API for 10,000 daily users\n- End-to-end latency SLO: p95 \u2264 2.0 seconds\n- API Gateway + Lambda + DynamoDB + S3\n\n## Proposed Architecture\n- Amazon API Gateway (HTTP API)\n- AWS Lambda for request handlers\n- Amazon DynamoDB with on-demand billing\n- Amazon S3 for document storage\n\n## Key Decisions\n- Deployment target: Terraform on AWS\n\n## Risks / Unknowns\n- Cold-start impact on p95\n\nREADY_FOR_BUILD\n"
+      },
+      "expected_output": "Call read_architecture_for_monitoring first, identify api-service in the design, then return an SLO-aware answer that compares the service's p95 latency to the 2.0s SLO from pdr.md and reports the simulated error rate.",
+      "expectations": [
+        "Calls read_architecture_for_monitoring before answering",
+        "References the SLO from pdr.md (p95 \u2264 2.0 seconds) explicitly",
+        "Reports a p95 latency value and an error rate value",
+        "Labels the data as simulated, not production"
+      ]
+    },
+    {
+      "id": "monitor-002",
+      "category": "missing design boundary",
+      "mode": "invoke",
+      "input": "What's the current error rate on api-service?",
+      "files_setup": {},
+      "expected_output": "Detect that no pdr.md (or architecture.md) exists, refuse to invent metrics, and tell the user to complete the DESIGN flow first.",
+      "expectations": [
+        "Reports that the design document is missing",
+        "Does not fabricate error rate, p95, or any other metric",
+        "Suggests running the DESIGN agent to produce pdr.md",
+        "Does not call get_simulated_service_* when no design is present"
+      ]
+    },
+    {
+      "id": "monitor-003",
+      "category": "dynamic service extraction",
+      "mode": "invoke",
+      "input": "Show me health for all services.",
+      "files_setup": {
+        "pdr.md": "# Product Design Requirements (PDR)\n\n## Requirements\n- Real-time video analytics pipeline\n- 50,000 events/sec ingest\n- Region: us-east-1\n\n## Proposed Architecture\n- Amazon Kinesis Data Streams for ingest\n- AWS Lambda for stream processing\n- Amazon ECS Fargate for long-running workers\n- Amazon ElastiCache Redis for session state\n- Amazon S3 for archival\n\n## Key Decisions\n- Deployment target: Terraform on AWS\n\n## Risks / Unknowns\n- None blocking\n\nREADY_FOR_BUILD\n"
+      },
+      "expected_output": "Read pdr.md, extract the AWS services from the architecture section (kinesis, lambda, ecs, elasticache, s3), generate health for each, and list them in the response. The set of services must reflect pdr.md, not a hardcoded list.",
+      "expectations": [
+        "Calls read_architecture_for_monitoring before listing services",
+        "Mentions services that appear in pdr.md (kinesis / lambda / ecs / elasticache / s3)",
+        "Does NOT mention hardcoded services like worker-service, llm-gateway, cache, db unless they appear in pdr.md",
+        "Provides per-service health status (healthy / warning / critical)"
+      ]
+    },
+    {
+      "id": "monitor-004",
+      "category": "health classification",
+      "mode": "invoke",
+      "input": "Which services are at warning or critical status?",
+      "files_setup": {
+        "pdr.md": "# Product Design Requirements (PDR)\n\n## Requirements\n- Internal analytics dashboard\n- 1,000 daily users, modest load\n\n## Proposed Architecture\n- Amazon API Gateway (HTTP API)\n- AWS Lambda for handlers\n- Amazon RDS for PostgreSQL\n\n## Key Decisions\n- Deployment target: Terraform on AWS\n\nREADY_FOR_BUILD\n"
+      },
+      "expected_output": "Compute health for each service from pdr.md using the agent's threshold rules (cpu \u2265 75, memory \u2265 80, error_rate \u2265 2, p95 \u2265 1000 ms for warning; error_rate \u2265 5 or p95 \u2265 2000 ms for critical) and report which services fall into each band.",
+      "expectations": [
+        "Reports at least one service with status healthy and at least one with status warning or critical",
+        "Explains the signal that triggered the warning/critical classification (e.g. high_cpu, high_memory, high_error_rate, high_latency)",
+        "Does not invent services that are not in pdr.md"
+      ]
+    },
+    {
+      "id": "monitor-005",
+      "category": "promql recommendations",
+      "mode": "invoke",
+      "input": "What PromQL should I use to track production p95 latency by service?",
+      "files_setup": {
+        "pdr.md": "# Product Design Requirements (PDR)\n\n## Requirements\n- Production web API\n\n## Proposed Architecture\n- Amazon API Gateway\n- AWS Lambda\n\nREADY_FOR_BUILD\n"
+      },
+      "expected_output": "Return the recommended production p95 latency query using histogram_quantile over the http_request_duration_seconds_bucket histogram, scoped per service.",
+      "expectations": [
+        "Uses histogram_quantile(0.95, ...) over http_request_duration_seconds_bucket",
+        "Aggregates by service label",
+        "Converts seconds to milliseconds (multiplies by 1000) so the value is in ms",
+        "Mentions a 5-minute rate window"
+      ]
+    },
+    {
+      "id": "monitor-006",
+      "category": "prometheus live query",
+      "mode": "invoke",
+      "input": "Run the query `up` against Prometheus and tell me which services are up.",
+      "files_setup": {
+        "pdr.md": "# Product Design Requirements (PDR)\n\n## Requirements\n- Production web API\n\n## Proposed Architecture\n- Amazon API Gateway\n- AWS Lambda\n\nREADY_FOR_BUILD\n"
+      },
+      "expected_output": "Call query_prometheus with the literal query `up`, surface success or a structured fallback error if Prometheus is unreachable, and never silently fall back to simulated data when the user asked for a live query.",
+      "expectations": [
+        "Calls query_prometheus with promql='up'",
+        "Distinguishes between prometheus source and simulated source in the response",
+        "On Prometheus failure, returns a structured error with a fallback hint instead of fabricating metrics",
+        "On success, reports which services have value 1 (up)"
+      ]
+    },
+    {
+      "id": "monitor-007",
+      "category": "prometheus fallback",
+      "mode": "invoke",
+      "input": "Show me demo metrics for my services.",
+      "files_setup": {
+        "pdr.md": "# Product Design Requirements (PDR)\n\n## Requirements\n- Production web API\n\n## Proposed Architecture\n- Amazon API Gateway\n- AWS Lambda\n- Amazon S3\n\nREADY_FOR_BUILD\n"
+      },
+      "expected_output": "Use get_simulated_service_metrics (or get_simulated_service_health) since the user asked for a demo, clearly label the data as simulated, and base the service list on pdr.md.",
+      "expectations": [
+        "Calls get_simulated_service_metrics or get_simulated_service_health",
+        "Labels the response as simulated, not production",
+        "Service list comes from pdr.md (api-gateway, lambda, s3), not hardcoded services",
+        "Mentions how to switch to live Prometheus (PROMETHEUS_URL) if the user wants production data"
+      ]
+    },
+    {
+      "id": "monitor-008",
+      "category": "SLO cross-check",
+      "mode": "invoke",
+      "input": "Are we meeting the latency SLO defined in pdr.md?",
+      "files_setup": {
+        "pdr.md": "# Product Design Requirements (PDR)\n\n## Requirements\n- Serverless RAG API for 10,000 daily users\n- End-to-end latency SLO: p95 \u2264 2.0 seconds\n- API Gateway + Lambda + DynamoDB\n\n## Proposed Architecture\n- Amazon API Gateway\n- AWS Lambda\n- Amazon DynamoDB\n\nREADY_FOR_BUILD\n"
+      },
+      "expected_output": "Read pdr.md, identify the 2.0s p95 SLO, evaluate each service's p95 against that threshold, and report any services that are at risk or violating the SLO.",
+      "expectations": [
+        "Explicitly states the SLO threshold from pdr.md (2.0 seconds / 2000 ms)",
+        "Reports a verdict per service (meeting / at risk / violating)",
+        "Distinguishes simulated vs production data",
+        "Calls out any service whose simulated p95 exceeds the SLO"
+      ]
+    }
+  ]
+}

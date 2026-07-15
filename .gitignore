@@ -3,7 +3,6 @@ __pycache__/
 *.pyc
 *.pyo
 .venv/
-.memory
 # Poetry
 dist/
 *.lock
@@ -23,8 +22,11 @@ evals/results/
 # arch.md — generated at runtime, not source code
 arch.md
 
-# SQLite DB
+# Memory / SQLite (runtime state, not source code)
+.memory/
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 
 # LangSmith / observability

@@ -1,0 +1,20 @@
+services:
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=2d
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
+  sample-exporter:
+    image: python:3.11-slim
+    working_dir: /app
+    command: python sample_exporter.py
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./sample_exporter.py:/app/sample_exporter.py:ro
+

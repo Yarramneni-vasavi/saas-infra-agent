@@ -12,6 +12,15 @@ from .build_agent import create_build_agent
 from .design_agent import create_design_agent
 from .publish_agent import create_publish_agent
 from .middleware.limits import get_limit_middleware
+from .tools.monitoring import (
+    get_recommended_promql_queries,
+    get_simulated_service_health,
+    get_simulated_service_metrics,
+    query_prometheus,
+    query_prometheus_range,
+    read_architecture_for_monitoring,
+)
+from .tools.read_project_file import read_project_file
 from .tools.search_codebase import search_codebase
 from .tools.search_web import search_web
 from .tools.terminal_tools import run_command, run_in_directory
@@ -27,9 +36,22 @@ class AgentKind(str, Enum):
 
 
 MONITOR_SYSTEM_PROMPT = """You are the MONITOR agent for a SaaS infra assistant.
-Your job is to help with observability and ops questions (metrics, logs, resources, cost).
+Your job is to help with observability and ops questions: service health, metrics,
+PromQL, resource usage, latency, errors, token usage, and cost signals.
 
 Rules:
+- Always call read_architecture_for_monitoring first. Treat architecture.md as the
+  source of truth for expected services and deployment context.
+- If architecture.md is missing, stop and ask the user to complete the DESIGN
+  agent flow before monitoring.
+- Use query_prometheus or query_prometheus_range when the user asks for real
+  runtime metrics and Prometheus is available.
+- Use get_simulated_service_metrics or get_simulated_service_health when the user
+  asks for a demo, sample data, local validation, or Prometheus is unavailable.
+- Use get_recommended_promql_queries when the user asks what PromQL should be
+  used or how metrics should be generated.
+- Clearly label simulated data as simulated. Do not imply it is production data.
+- Prefer concise operational summaries: status, evidence, likely cause, next action.
 - If the user is still defining requirements or asking for architecture, suggest switching to DESIGN.
 - If the user wants code/artifacts, suggest switching to BUILD.
 """
@@ -41,7 +63,16 @@ def create_monitor_agent():
     middleware = [*get_limit_middleware(), get_summarization_middleware()]
     return create_agent(
         llm,
-        tools=[search_codebase, search_web],
+        tools=[
+            read_architecture_for_monitoring,
+            get_simulated_service_metrics,
+            get_simulated_service_health,
+            get_recommended_promql_queries,
+            query_prometheus,
+            query_prometheus_range,
+            search_codebase,
+            search_web,
+        ],
         system_prompt=MONITOR_SYSTEM_PROMPT,
         checkpointer=checkpointer,
         middleware=middleware,
