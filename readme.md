@@ -1,37 +1,71 @@
 # SaaS Infra Agent
 
-An AI agent platform that turns a plain-language requirement ("we need a RAG
-pipeline for 10,000 daily users with sub-2-second latency") into a designed,
-provisioned, and monitored cloud stack.
+SaaS Infra Agent is an AI agent CLI that turns plain-language infrastructure requirements (for example: "we need a RAG pipeline for 10,000 daily users with sub-2s latency") into an approved design (`pdr.md`), runnable IaC artifacts, and operational guidance.
 
-Three agents, coordinated by a router ([agent/orchestrator.py](saas_infra_agent/agent/orchestrator.py)):
+The REPL routes each message to an infra-focused agent via the orchestrator (`saas_infra_agent/agent/orchestrator.py`):
 
-| Agent   | Job                                                                                  |
-|---------|--------------------------------------------------------------------------------------|
-| DESIGN  | Clarifies requirements, recommends a stack + cost, writes `pdr.md`           |
-| BUILD   | Turns the approved `pdr.md` into IaC (Terraform, Dockerfile, compose, k8s)   |
-| MONITOR | Metrics, token usage, cost analysis, optimization recommendations                     |
+| Agent   | What it does |
+|--------|--------------|
+| DESIGN | Clarifies requirements and produces an approved plan/design doc (`pdr.md`). |
+| BUILD  | Generates Terraform artifacts (and other deployables like Docker/Compose/K8s), validates them, and deploys to the target cloud. In the initial phase of this project, deployments are done against a cloud emulator (Floci) to simulate AWS locally. |
+| MONITOR | Helps with observability and ops: metrics, token usage, cost signals, and optimization recommendations. (Work In-Progress) |
+| PUBLISH | Publishes generated artifacts (for example to GitHub) via MCP integrations. |
 
-The BUILD agent is a long-running [deepagents](https://pypi.org/project/deepagents/)
-deep agent: it plans the build with a todo list, loads the skills library
-([saas_infra_agent/skills/](saas_infra_agent/skills/)) via progressive disclosure
-(per-service AWS skills, `terraform-module-library`, `cost-optimization`,
-workload patterns), and writes artifacts through sandboxed filesystem tools —
-writes are permission-limited to the `artifacts/` directory, and `.env`/`.git`
-are unreadable to the model.
+More details: `saas_infra_agent_design.md`.
+
+## Architecture (high level)
+
+```mermaid
+flowchart LR
+  user((User)) --> cli[saas-cli REPL]
+  cli --> orch[Orchestrator / Router]
+  orch --> gates[Domain + Safety gates]
+  gates --> design[DESIGN]
+  gates --> build[BUILD]
+  gates --> monitor[MONITOR]
+  gates --> publish[PUBLISH]
+  gates --> general[GENERAL]
+
+  orch <--> mem[SQLite memory + checkpoints]
+  design --> skills[Skills library<br/>progressive disclosure]
+  build --> skills[Skills library<br/>progressive disclosure]
+  publish --> mcp[MCP servers<br/>GitHub, etc.]
+```
+
+Key runtime concepts:
+
+- Routing: orchestrator selects the agent each turn and resumes paused agents before normal routing (so replies like `approve` are accepted).
+- Gating: infra-only domain gate + safety gate before agent invocation.
+- Approvals/interrupts: sensitive steps (plan approval, local validation loops) pause and resume via interrupts.
+- Progressive disclosure skills: BUILD loads only the skills it needs from `saas_infra_agent/skills/**/SKILL.md`.
+- Sandboxed artifact writing: generated IaC/artifacts are written via permissioned filesystem tools.
+- Memory: short-term conversation state + pending interrupts, plus long-term memory for durable preferences/facts.
+
+## Tech stack
+
+- Language/runtime: Python 3.11+
+- Packaging: Poetry (`pyproject.toml`, `poetry.lock`)
+- Agent runtime: LangChain + LangGraph (interrupt-driven flows) and `deepagents` (long-running BUILD agent with task plans)
+- IaC / delivery: Terraform, Docker, Docker Compose, Kubernetes manifests
+- Memory/state: SQLite (checkpointer + build task persistence + long-term store)
+- Integrations: MCP servers (for example GitHub publishing)
+- Optional services: Qdrant (codebase search), Tavily (web search for MONITOR)
+
+## Concepts used (implementation patterns)
+
+- Multi-agent orchestration with explicit roles (design/build/monitor/publish).
+- Human-in-the-loop approvals using interrupt/resume workflows.
+- Validation loops with loop-breakers (repeated Terraform failures trigger a stop/continue prompt).
+- Skill library as reusable micro-playbooks (progressive disclosure keeps prompts small and consistent).
+- Emulator-first deployments in early phases (Floci local AWS emulator for Terraform).
 
 ## Setup
 
-Requires Python 3.11+ and [Poetry](https://python-poetry.org/).
+Requires Python 3.11+ and Poetry.
 
 ```bash
-cd saas-infra-agent
 poetry install
 ```
-
-> The project needs `langchain >= 1.3.11` (pulled in by `poetry install`).
-> Running against an older globally-installed langchain will fail at agent
-> creation inside the middleware.
 
 ### Environment
 
@@ -41,14 +75,12 @@ Copy the example env file and fill in your keys:
 cp .env.example .env
 ```
 
-| Variable                        | Needed for                                            |
-|---------------------------------|-------------------------------------------------------|
-| `OPENAI_API_KEY`                | Required — all agents (models set in `saas_infra_agent/config.yaml`) |
-| `TAVILY_API_KEY`                | MONITOR agent web search                              |
-| `QDRANT_URL`, `QDRANT_API_KEY`  | `search_codebase` tool (Qdrant cloud)                 |
-| `LANGSMITH_API_KEY`             | Optional tracing                                      |
+| Variable | Needed for |
+|----------|------------|
+| `OPENAI_API_KEY` | Required - all agents (models set in `saas_infra_agent/config.yaml`) |
+| `LANGSMITH_API_KEY` | Optional tracing |
 
-Never commit `.env` — keep real keys out of `.env.example` too.
+Never commit `.env` (and do not put real keys in `.env.example`).
 
 ## Run
 
@@ -56,49 +88,37 @@ Never commit `.env` — keep real keys out of `.env.example` too.
 poetry run saas-cli
 ```
 
-It's a REPL. The router picks an agent from your message, or force one with a
-prefix:
+The router picks an agent from your message, or you can force one with a prefix:
 
 ```
-> we need a RAG pipeline for 10,000 daily users    ← routes to DESIGN
-> /build generate the infra                        ← forces BUILD
-> /monitor what's our token spend?                 ← forces MONITOR
+> we need a RAG pipeline for 10,000 daily users    <- routes to DESIGN
+> /build generate the infra                        <- forces BUILD
+> /monitor what's our token spend?                 <- forces MONITOR
 ```
 
 Session commands: `/new`, `/switch <id>`, `/session`, `/exit`.
 
 ### Typical flow
 
-1. Describe the project — the DESIGN agent asks clarifying questions and, once
-   approved, saves `pdr.md`.
-2. Say "build it" — the BUILD agent reads `pdr.md`, loads the relevant
-   skills, and writes IaC into the `artifacts/` directory.
-3. Apply the output: `terraform init/plan/apply`, `docker compose up`.
-
-## Standalone build agent (isolated testing)
-
-Runs the build step without the orchestrator, memory, or skills — handy for
-quick iteration against a fixed plan:
-
-```bash
-export OPENAI_API_KEY=sk-...
-python3 build_agent_standalone.py --arch-md sample_arch.md --output-dir ./infra_out
-```
+1. Describe the project - DESIGN asks clarifying questions and saves `pdr.md` after approval.
+2. Say "build it" - BUILD reads `pdr.md` and writes IaC into `artifacts/`.
+3. Validate/deploy - Terraform validation runs without apply by default; in early-phase mode, deployments can target Floci (local AWS emulator).
+4. Monitor - MONITOR can query Prometheus/Cloudwatch for metrics (if configured) or use simulated metrics for demos. - WIP
 
 ## Project layout
 
 ```
 saas_infra_agent/
-├── main.py                  # CLI entry point (poetry run saas-cli)
-├── config.yaml              # LLM models, memory, limits, artifact dir
-├── agent/
-│   ├── orchestrator.py      # Router: design | build | monitor
-│   ├── design_agent.py      # Interrupt-driven requirements workflow
-│   ├── build_agent.py       # Plan → IaC deep agent (todos, skills, sandboxed fs)
-│   ├── agents.py            # AgentKind + monitor agent + get_agent()
-│   └── tools/               # read/write/search tools
-├── skills/                  # Skills library (SKILL.md per skill)
-│   ├── workloads/           # rag, microservices, monolith, ...
-│   └── aws-agent-skills/    # per-AWS-service guidance
-└── memory/                  # SQLite checkpointer + session handling
++-- main.py                  # CLI entry point (poetry run saas-cli)
++-- config.yaml              # Models, memory, limits, artifact dir, deploy settings
++-- agent/
+|   +-- orchestrator.py      # Router: design | build | monitor | publish
+|   +-- design_agent.py      # Requirements -> approved design (interrupt-driven)
+|   +-- build_agent.py       # Plan -> IaC deep agent (todos, skills, sandboxed fs)
+|   +-- publish_agent.py     # Publish artifacts via MCP
+|   +-- agents.py            # AgentKind + get_agent()
+|   +-- tools/               # Read/write/search + Terraform/monitoring tools
++-- skills/                  # Skills library (SKILL.md per skill)
++-- memory/                  # SQLite checkpointer + session handling
++-- mcp/                     # MCP servers, To connect to github
 ```

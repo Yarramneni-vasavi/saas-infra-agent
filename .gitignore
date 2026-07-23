@@ -34,3 +34,7 @@ arch.md
 
 # VS Code
 .vscode/
+
+.deepeval/
+data/
+prometheus.yml

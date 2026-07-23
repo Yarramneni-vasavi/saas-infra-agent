@@ -1,18 +1,22 @@
 # SaaS Infra Agent — Design & Flow
 
-- Updated: 2026-07-15
+- Updated: 2026-07-23
 - Repo: `saas-cli` (Python/Poetry)
 
 This document describes the architecture of the **SaaS Infra Agent** itself (the CLI and its agent runtime), not the sample app architectures it generates.
 
 ## 1. What the system does
 
-`saas-cli` is a REPL that routes each user message to one of four infra-focused agents:
+`saas-cli` is a REPL that routes each user message to one of the infra-focused agents:
 
 - **DESIGN**: clarifies requirements and produces an approved design doc (`pdr.md`)
-- **BUILD**: generates runnable IaC artifacts (Terraform, compose, k8s, Dockerfile) and validates them locally
+- **BUILD**: generates runnable IaC artifacts (Terraform, compose, Dockerfile) and validates them locally
 - **MONITOR**: answers monitoring/PromQL questions using Prometheus or simulated metrics
 - **PUBLISH**: publishes generated artifacts to GitHub via MCP
+
+Optional extension (not required for the core flow):
+
+- **GENERAL**: a “catch-all” helper agent for safe, non-infra questions (project navigation, terminology, general coding help) so the infra agents can stay tightly scoped.
 
 The CLI enforces:
 - **Domain gating** (infra-only) and **safety gating**
@@ -47,9 +51,11 @@ flowchart LR
   build[BUILD agent\ndeepagents]
   monitor[MONITOR agent\nLangChain agent]
   publish[PUBLISH agent]
+  general[GENERAL agent\n(optional)]
 
   skills[(Skills library\nsaas_infra_agent/skills/*/SKILL.md)]
   mcp[(MCP servers\nGitHub, ...)]
+  floci[(Floci AWS emulator\n(optional local target))]
 
   st[(Short-term state\n.memory/memory.db\nLangGraph checkpoint)]
   tasks[(Build task plan\nbuild_tasks table\n.memory/memory.db)]
@@ -63,8 +69,10 @@ flowchart LR
   orch --> build
   orch --> monitor
   orch --> publish
+  orch -.-> general
 
   build --> skills
+  build -.-> floci
   publish --> mcp
   orch <--> st
   build <--> tasks
@@ -146,6 +154,27 @@ When enabled:
 - The BUILD system prompt requires reading `/skills/terraform-floci-emulator/SKILL.md` before writing Terraform.
 - `terraform_validate` performs a **preflight check**: it fails early if the generated Terraform doesn’t include an AWS provider config compatible with Floci (provider block + endpoints + dummy creds and/or skip validations).
 
+Local simulator environment:
+
+- `docker-compose.yaml` runs Floci on port `4566` and persists state under `./data`.
+- Start it with: `docker compose up -d floci`
+
+Terraform workflow (local):
+
+1. Start Floci: `docker compose up -d floci`
+2. Run the BUILD agent with emulator mode enabled (targeting Floci, not real AWS).
+3. Validate (no apply):
+   - `terraform init -backend=false -input=false -no-color`
+   - `terraform validate -no-color`
+4. (Optional) Apply locally against Floci if you want a full local deployment run.
+
+Terraform generation requirements (emulator mode):
+
+- Include an `aws` provider configuration suitable for local emulators:
+  - explicit `endpoints { ... }` pointing at the Floci endpoint
+  - dummy credentials and/or skip validation flags
+- Only generate resources supported by Floci; for unsupported services, stub with TODOs rather than producing invalid Terraform.
+
 ## 6. MONITOR agent architecture
 
 The monitor path is designed to work in two modes:
@@ -209,4 +238,25 @@ Artifacts / state:
 - Short-term + build tasks: `.memory/memory.db`
 - Long-term: `.memory/long_term.db`
 - Logs: `.logs/saas-cli.log`
+
+## 10. GENERAL agent (optional/future)
+
+The core system is intentionally infra-scoped (DESIGN/BUILD/MONITOR/PUBLISH). A **GENERAL** agent is an optional extension to handle safe, non-infra questions without polluting the infra agents’ prompts.
+
+When to route to GENERAL:
+
+- The message is out of infra domain, but it’s still safe/helpful to answer (terminology, “how to run”, repo navigation).
+- The user is asking for general coding help that doesn’t require generating or applying infra artifacts.
+
+Guardrails:
+
+- GENERAL must follow the same safety rules as the rest of the system.
+- GENERAL must not bypass approvals (shell execution, publishing, etc.).
+- GENERAL should not generate IaC artifacts; it should hand off to BUILD when the user wants infra output.
+
+Implementation sketch:
+
+- Add `GENERAL` to `AgentKind` in `saas_infra_agent/agent/agents.py` and implement `create_general_agent()`.
+- Update orchestrator routing in `saas_infra_agent/agent/orchestrator.py` to support `/general ...`, and optionally allow a safe fallback route when domain gating rejects a message.
+- Keep tools minimal and read-only by default (e.g., `read_project_file`, `search_codebase`, optional `search_web`).
 
